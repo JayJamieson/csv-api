@@ -1,0 +1,182 @@
+openapi: 3.1.0
+info:
+  title: CSV REST API
+  version: 1.0.0
+  description: API for loading and querying CSV data files
+servers:
+  - url: http://localhost:8001
+paths:
+  /load:
+    post:
+      summary: Load a CSV file from a URL or upload
+      description: |
+        Load a CSV file by specifying either a URL query parameter
+        or by providing the file name and uploading the CSV in the request body.
+      parameters:
+        - in: query
+          name: url
+          schema:
+            type: string
+            format: uri
+          description: HTTP URL of the CSV file to load
+        - in: query
+          name: name
+          schema:
+            type: string
+          description: Name of the CSV file when uploading directly
+      requestBody:
+        description: The CSV file content when uploading via `name` query parameter
+        content:
+          text/csv:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Successfully loaded CSV
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoadResponse'
+        '4XX':
+          $ref: '#/components/responses/ErrorResponse'
+        '5XX':
+          $ref: '#/components/responses/ErrorResponse'
+  /api/{uuid}:
+    get:
+      summary: Query loaded CSV data
+      description: Retrieve rows from a previously loaded CSV by UUID
+      parameters:
+        - in: path
+          name: uuid
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID of the loaded CSV resource
+        - in: query
+          name: _size
+          schema:
+            type: integer
+            minimum: 1
+          description: Limit the number of rows returned
+        - in: query
+          name: _sort
+          schema:
+            type: string
+          description: Column name to sort ascending
+        - in: query
+          name: _sort_desc
+          schema:
+            type: string
+          description: Column name to sort descending
+        - in: query
+          name: _offset
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for pagination
+        - in: query
+          name: _shape
+          schema:
+            type: string
+            enum: [objects, array]
+          description: Output JSON format `objects` for array of objects, `array` for array of arrays
+        - in: query
+          name: _rowid
+          schema:
+            type: string
+            enum: [show, hide]
+          description: Show or hide the `rowid` field
+        - in: query
+          name: _total
+          schema:
+            type: string
+            enum: [show, hide]
+          description: Show or hide the total row count independent of pagination
+      responses:
+        '200':
+          description: CSV data retrieved successfully
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/DataResponseObjects'
+                  - $ref: '#/components/schemas/DataResponseArray'
+        '4XX':
+          $ref: '#/components/responses/ErrorResponse'
+        '5XX':
+          $ref: '#/components/responses/ErrorResponse'
+components:
+  schemas:
+    LoadResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        endpoint:
+          type: string
+          format: uri
+          example: http://localhost:8001/api/123e4567-e89b-12d3-a456-426614174000
+      required:
+        - ok
+        - endpoint
+    DataResponseBase:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        query_ms:
+          type: number
+          format: float
+          example: 2.681016922
+        columns:
+          type: array
+          items:
+            type: string
+          example: ["rowid", "Mission", "Programme", "Consommation de CP"]
+        total:
+          type: integer
+          example: 3
+      required: [ok, query_ms, columns, total]
+    DataResponseObjects:
+      allOf:
+        - $ref: '#/components/schemas/DataResponseBase'
+        - type: object
+          properties:
+            rows:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+    DataResponseArray:
+      allOf:
+        - $ref: '#/components/schemas/DataResponseBase'
+        - type: object
+          properties:
+            rows:
+              type: array
+              items:
+                type: array
+                items:
+                  type: string
+    ErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        error:
+          type: string
+        message:
+          type: string
+      required: [timestamp, error, message]
+  responses:
+    ErrorResponse:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

@@ -1,0 +1,16 @@
+Animal,Species,Habitat,Lifespan_Years,Average_Weight_kg,Endangered_Status,Diet
+Lion,Panthera leo,Savanna,15,190,Vulnerable,Carnivore
+Elephant,Loxodonta africana,Forest/Savanna,70,6000,Vulnerable,Herbivore
+Tiger,Panthera tigris,Forest,11,220,Endangered,Carnivore
+Giant Panda,Ailuropoda melanoleuca,Forest,20,120,Vulnerable,Herbivore
+Blue Whale,Balaenoptera musculus,Ocean,90,150000,Endangered,Carnivore
+Chimpanzee,Pan troglodytes,Forest,40,45,Endangered,Omnivore
+Koala,Phascolarctos cinereus,Forest,15,12,Vulnerable,Herbivore
+Polar Bear,Ursus maritimus,Arctic,25,450,Vulnerable,Carnivore
+Red Panda,Ailurus fulgens,Forest,12,5,Endangered,Omnivore
+Gray Wolf,Canis lupus,Various,13,40,Least Concern,Carnivore
+Gorilla,Gorilla gorilla,Forest,40,180,Critically Endangered,Herbivore
+Giraffe,Giraffa camelopardalis,Savanna,25,1200,Vulnerable,Herbivore
+Kangaroo,Macropus rufus,Grassland,15,85,Least Concern,Herbivore
+Dolphin,Tursiops truncatus,Ocean,25,150,Least Concern,Carnivore
+Penguin,Spheniscidae,Antarctic,20,22,Various,Carnivore

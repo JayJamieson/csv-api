@@ -1,0 +1,21 @@
+Transaction_ID,Date,Customer_ID,Product,Category,Quantity,Price,Payment_Method,Shipping_Method,Status
+ORD-10045,2023-11-25,CUST-5872,Wireless Headphones,Electronics,1,89.99,Credit Card,Standard,Delivered
+ORD-10046,2023-11-25,CUST-4123,Smart Watch,Electronics,1,199.99,PayPal,Express,Delivered
+ORD-10047,2023-11-26,CUST-2984,Yoga Mat,Fitness,2,24.99,Credit Card,Standard,Delivered
+ORD-10048,2023-11-26,CUST-7612,Protein Powder,Nutrition,1,34.99,Debit Card,Standard,Delivered
+ORD-10049,2023-11-27,CUST-1256,Coffee Maker,Home,1,79.99,Credit Card,Express,Delivered
+ORD-10050,2023-11-27,CUST-3498,Running Shoes,Footwear,1,129.99,PayPal,Standard,Delivered
+ORD-10051,2023-11-28,CUST-5872,Bluetooth Speaker,Electronics,1,59.99,Credit Card,Standard,Delivered
+ORD-10052,2023-11-29,CUST-9135,Laptop,Electronics,1,899.99,Credit Card,Express,Shipped
+ORD-10053,2023-11-29,CUST-6234,Winter Jacket,Clothing,1,149.99,Debit Card,Standard,Shipped
+ORD-10054,2023-11-30,CUST-4123,Wireless Mouse,Electronics,1,24.99,PayPal,Standard,Processing
+ORD-10055,2023-12-01,CUST-7612,Plant-Based Protein,Nutrition,2,39.99,Credit Card,Standard,Processing
+ORD-10056,2023-12-01,CUST-2984,Dumbbells Set,Fitness,1,129.99,Credit Card,Express,Processing
+ORD-10057,2023-12-02,CUST-8765,Air Fryer,Home,1,99.99,Debit Card,Standard,Processing
+ORD-10058,2023-12-02,CUST-1256,Kitchen Knife Set,Home,1,79.99,Credit Card,Standard,Pending
+ORD-10059,2023-12-03,CUST-3498,Trail Running Shoes,Footwear,1,159.99,PayPal,Express,Pending
+ORD-10060,2023-12-03,CUST-6234,Snow Boots,Footwear,1,119.99,Credit Card,Standard,Pending
+ORD-10061,2023-12-04,CUST-9135,Monitor,Electronics,2,249.99,Credit Card,Express,Pending
+ORD-10062,2023-12-04,CUST-5872,Wireless Earbuds,Electronics,1,129.99,PayPal,Standard,Pending
+ORD-10063,2023-12-05,CUST-2984,Resistance Bands,Fitness,3,19.99,Debit Card,Standard,Pending
+ORD-10064,2023-12-05,CUST-4123,Smartwatch Charger,Electronics,1,29.99,Credit Card,Standard,Pending
