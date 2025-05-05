@@ -14,7 +14,7 @@ import (
 
 	"github.com/JayJamieson/csv-api/pkg/models"
 	"github.com/google/uuid"
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/marcboeker/go-duckdb/v2"
 	_ "github.com/tursodatabase/libsql-client-go/libsql"
 )
 
@@ -113,7 +113,7 @@ func (db *DB) ImportCSVFromReader(ctx context.Context, filename string, reader i
 		return nil, err
 	}
 
-	query := fmt.Sprintf("CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', auto_detect=TRUE, store_rejects=true)",
+	query := fmt.Sprintf("CREATE TABLE %s AS SELECT * FROM read_csv_auto('%s', auto_detect=TRUE, strict_mode=false, store_rejects=true)",
 		tableName, tempFile)
 
 	if _, err := duckConn.Exec(query); err != nil {
