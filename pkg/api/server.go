@@ -13,6 +13,7 @@ import (
 	"github.com/JayJamieson/csv-api/pkg/handlers"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/gommon/log"
 )
 
 type Config struct {
@@ -39,6 +40,7 @@ func New(config Config) (*Server, error) {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
+	e.Logger.SetLevel(log.INFO)
 
 	h := handlers.NewHandler(database)
 
@@ -83,6 +85,8 @@ func (s *Server) Start() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	s.echo.Logger.Info("Shutting down")
 
 	if err := s.echo.Shutdown(ctx); err != nil {
 		return fmt.Errorf("failed to shutdown server: %w", err)

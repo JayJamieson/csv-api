@@ -163,7 +163,7 @@ func (db *DB) QueryDuckDBTable(
 	sortCol string,
 	sortDesc bool,
 	showRowID bool,
-) ([]string, []map[string]interface{}, [][]interface{}, int, float64, error) {
+) ([]string, []map[string]any, [][]any, int, float64, error) {
 	startTime := time.Now()
 
 	duckConn, err := db.getDuckDBConnection(id)
@@ -171,7 +171,7 @@ func (db *DB) QueryDuckDBTable(
 		return nil, nil, nil, 0, 0, err
 	}
 
-	query := fmt.Sprintf("SELECT ")
+	query := "SELECT "
 	if showRowID {
 		query += "row_number() OVER () as rowid, "
 	}
@@ -203,13 +203,13 @@ func (db *DB) QueryDuckDBTable(
 		return nil, nil, nil, 0, 0, fmt.Errorf("failed to get columns: %w", err)
 	}
 
-	var objectRows []map[string]interface{}
-	var arrayRows [][]interface{}
+	var objectRows []map[string]any
+	var arrayRows [][]any
 
 	for rows.Next() {
-		values := make([]interface{}, len(columns))
+		values := make([]any, len(columns))
 
-		scanArgs := make([]interface{}, len(columns))
+		scanArgs := make([]any, len(columns))
 		for i := range values {
 			scanArgs[i] = &values[i]
 		}
@@ -218,8 +218,8 @@ func (db *DB) QueryDuckDBTable(
 			return nil, nil, nil, 0, 0, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		objRow := make(map[string]interface{})
-		arrRow := make([]interface{}, len(columns))
+		objRow := make(map[string]any)
+		arrRow := make([]any, len(columns))
 
 		for i, col := range columns {
 			val := values[i]
@@ -251,10 +251,10 @@ func (db *DB) QueryCSVTable(
 	sortCol string,
 	sortDesc bool,
 	showRowID bool,
-) ([]string, []map[string]interface{}, [][]interface{}, int, float64, error) {
+) ([]string, []map[string]any, [][]any, int, float64, error) {
 	startTime := time.Now()
 
-	query := fmt.Sprintf("SELECT ")
+	query := "SELECT "
 	if showRowID {
 		query += "rowid, "
 	}
@@ -290,9 +290,9 @@ func (db *DB) QueryCSVTable(
 	var arrayRows [][]any
 
 	for rows.Next() {
-		values := make([]interface{}, len(columns))
+		values := make([]any, len(columns))
 
-		scanArgs := make([]interface{}, len(columns))
+		scanArgs := make([]any, len(columns))
 		for i := range values {
 			scanArgs[i] = &values[i]
 		}
@@ -301,8 +301,8 @@ func (db *DB) QueryCSVTable(
 			return nil, nil, nil, 0, 0, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		objRow := make(map[string]interface{})
-		arrRow := make([]interface{}, len(columns))
+		objRow := make(map[string]any)
+		arrRow := make([]any, len(columns))
 
 		for i, col := range columns {
 			val := values[i]
@@ -374,7 +374,7 @@ func (db *DB) PersistToTurso(ctx context.Context, id string) error {
 		}
 	}()
 
-	tursoPermanentTableName := "csv_" + strings.Replace(id, "-", "_", -1)
+	tursoPermanentTableName := "csv_" + strings.ReplaceAll(id, "-", "_")
 	createTableSQL := fmt.Sprintf("CREATE TABLE %s (", tursoPermanentTableName)
 
 	createTableSQL += fmt.Sprintf("\"%s\" TEXT", strings.ReplaceAll(columns[0].Name, "\"", ""))
@@ -424,9 +424,9 @@ func (db *DB) PersistToTurso(ctx context.Context, id string) error {
 
 	for dataRows.Next() {
 
-		values := make([]interface{}, len(columnNames))
+		values := make([]any, len(columnNames))
 
-		scanArgs := make([]interface{}, len(columnNames))
+		scanArgs := make([]any, len(columnNames))
 		for i := range values {
 			scanArgs[i] = &values[i]
 		}
@@ -435,7 +435,7 @@ func (db *DB) PersistToTurso(ctx context.Context, id string) error {
 			return fmt.Errorf("failed to scan data row: %w", err)
 		}
 
-		stringValues := make([]interface{}, len(values))
+		stringValues := make([]any, len(values))
 		for i, v := range values {
 			if v == nil {
 				stringValues[i] = nil
