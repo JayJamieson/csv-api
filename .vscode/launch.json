@@ -10,13 +10,10 @@
       "request": "launch",
       "mode": "debug",
       "program": "${workspaceFolder}/cmd/server/main.go",
-      "args": [
-        "--port=3000",
-        "--db-url=http://127.0.0.1:8080"
-      ],
+      "args": ["--port=3000", "--db-url=http://127.0.0.1:8080"],
       "env": {
         "CGO_CFLAGS": "-O1 -g"
       }
-    },
+    }
   ]
 }

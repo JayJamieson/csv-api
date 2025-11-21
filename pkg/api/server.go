@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/JayJamieson/csv-api/pkg/db"
-	"github.com/JayJamieson/csv-api/pkg/handlers"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
+	echoSwagger "github.com/swaggo/echo-swagger"
 )
 
 type Config struct {
@@ -22,10 +22,9 @@ type Config struct {
 }
 
 type Server struct {
-	config   Config
-	echo     *echo.Echo
-	db       *db.DB
-	handlers *handlers.Handler
+	config Config
+	router *echo.Echo
+	db     *db.DB
 }
 
 func New(config Config) (*Server, error) {
@@ -37,45 +36,48 @@ func New(config Config) (*Server, error) {
 
 	e := echo.New()
 
+	server := &Server{
+		config: config,
+		router: e,
+		db:     database,
+	}
+
+	swagger, err := GetSwagger()
+	swagger.Servers = nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to load swagger: %w", err)
+	}
+
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
+
 	e.Logger.SetLevel(log.INFO)
 
-	h := handlers.NewHandler(database)
-
-	return &Server{
-		config:   config,
-		echo:     e,
-		db:       database,
-		handlers: h,
-	}, nil
+	RegisterHandlers(e, server)
+	server.setupDefaultRoutes()
+	return server, nil
 }
 
-func (s *Server) setupRoutes() {
+func (s *Server) setupDefaultRoutes() {
 
-	s.echo.POST("/load", s.handlers.LoadCSV)
-
-	s.echo.GET("/api/memory/:uuid", s.handlers.QueryMemoryCSV)
-	s.echo.POST("/api/:uuid/persist", s.handlers.PersistCSV)
-
-	s.echo.GET("/api/:uuid", s.handlers.QueryCSV)
-
-	s.echo.File("/api-docs", "api-spec.yml")
-
-	s.echo.GET("/", func(c echo.Context) error {
-		return c.Redirect(http.StatusPermanentRedirect, "/api-docs")
+	s.router.File("/doc.yml", "api-spec.yaml", func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) (returnErr error) {
+			c.Response().Header().Set(echo.HeaderContentType, "application/openapi+yaml; charset=utf-8")
+			return next(c)
+		}
 	})
+
+	s.router.GET("/swagger/*", echoSwagger.EchoWrapHandlerV3(func(c *echoSwagger.Config) {
+		c.URLs = []string{"http://localhost:3000/doc.yml"}
+	}))
 }
 
 func (s *Server) Start() error {
-
-	s.setupRoutes()
-
 	go func() {
 		addr := fmt.Sprintf(":%d", s.config.Port)
-		if err := s.echo.Start(addr); err != nil && err != http.ErrServerClosed {
-			s.echo.Logger.Fatalf("Failed to start server: %v", err)
+		if err := s.router.Start(addr); err != nil && err != http.ErrServerClosed {
+			s.router.Logger.Fatalf("Failed to start server: %v", err)
 		}
 	}()
 
@@ -86,9 +88,9 @@ func (s *Server) Start() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	s.echo.Logger.Info("Shutting down")
+	s.router.Logger.Info("Shutting down")
 
-	if err := s.echo.Shutdown(ctx); err != nil {
+	if err := s.router.Shutdown(ctx); err != nil {
 		return fmt.Errorf("failed to shutdown server: %w", err)
 	}
 

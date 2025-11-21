@@ -36,7 +36,6 @@ func main() {
 		log.Fatalf("Failed to create server: %v", err)
 	}
 
-	log.Printf("Starting CSV API server on port %d", config.Port)
 	if err := server.Start(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

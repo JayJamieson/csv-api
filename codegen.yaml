@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
+package: api
+output-options:
+  name-normalizer: ToCamelCase
+  prefer-skip-optional-pointer: true
+  prefer-skip-optional-pointer-with-omitzero: false
+  prefer-skip-optional-pointer-on-container-types: true
+generate:
+  models: true
+  echo-server: true
+  strict-server: false
+  embedded-spec: true
+output: pkg/api/csv_api.gen.go

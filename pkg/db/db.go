@@ -145,6 +145,7 @@ func (db *DB) GetCSVTable(ctx context.Context, id string) (*models.CSVTable, err
 		FROM csv_table
 		WHERE id = ?
 	`, id).Scan(&csvTable.ID, &csvTable.Filename, &csvTable.TableName, &csvTable.CreatedAt, &csvTable.Persisted)
+
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("CSV table with ID %s not found", id)
@@ -188,6 +189,7 @@ func (db *DB) QueryDuckDBTable(
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
+
 	if offset > 0 {
 		query += fmt.Sprintf(" OFFSET %d", offset)
 	}
