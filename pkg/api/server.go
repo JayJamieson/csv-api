@@ -42,8 +42,6 @@ func New(config Config) (*Server, error) {
 		db:     database,
 	}
 
-	swagger, err := GetSwagger()
-	swagger.Servers = nil
 	if err != nil {
 		return nil, fmt.Errorf("failed to load swagger: %w", err)
 	}
@@ -61,13 +59,7 @@ func New(config Config) (*Server, error) {
 
 func (s *Server) setupDefaultRoutes() {
 
-	s.router.File("/doc.yml", "api-spec.yaml", func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) (returnErr error) {
-			c.Response().Header().Set(echo.HeaderContentType, "application/openapi+yaml; charset=utf-8")
-			return next(c)
-		}
-	})
-
+	s.router.File("/doc.yml", "api-spec.yaml")
 	s.router.GET("/swagger/*", echoSwagger.EchoWrapHandlerV3(func(c *echoSwagger.Config) {
 		c.URLs = []string{"http://localhost:3000/doc.yml"}
 	}))
