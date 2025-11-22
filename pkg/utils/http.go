@@ -19,7 +19,7 @@ func DownloadFile(url string) (io.ReadCloser, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("failed to download file: %d", resp.StatusCode)
 	}
 
 	return resp.Body, nil

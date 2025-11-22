@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JayJamieson/csv-api/pkg/models"
 	"github.com/google/uuid"
 	_ "github.com/marcboeker/go-duckdb/v2"
 	_ "github.com/tursodatabase/libsql-client-go/libsql"
@@ -86,7 +85,7 @@ func (db *DB) getDuckDBConnection(id string) (*sql.DB, error) {
 	return conn, nil
 }
 
-func (db *DB) ImportCSVFromReader(ctx context.Context, filename string, reader io.Reader) (*models.CSVTable, error) {
+func (db *DB) ImportCSVFromReader(ctx context.Context, filename string, reader io.Reader) (*CSVTable, error) {
 	id := uuid.New().String()
 	tableName := "csv_data"
 
@@ -129,7 +128,7 @@ func (db *DB) ImportCSVFromReader(ctx context.Context, filename string, reader i
 		return nil, fmt.Errorf("failed to store CSV reference: %w", err)
 	}
 
-	return &models.CSVTable{
+	return &CSVTable{
 		ID:        id,
 		Filename:  filename,
 		TableName: tableName,
@@ -138,13 +137,14 @@ func (db *DB) ImportCSVFromReader(ctx context.Context, filename string, reader i
 	}, nil
 }
 
-func (db *DB) GetCSVTable(ctx context.Context, id string) (*models.CSVTable, error) {
-	var csvTable models.CSVTable
+func (db *DB) GetCSVTable(ctx context.Context, id string) (*CSVTable, error) {
+	var csvTable CSVTable
 	err := db.tursoConn.QueryRowContext(ctx, `
 		SELECT id, filename, table_name, created_at, persisted
 		FROM csv_table
 		WHERE id = ?
 	`, id).Scan(&csvTable.ID, &csvTable.Filename, &csvTable.TableName, &csvTable.CreatedAt, &csvTable.Persisted)
+
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("CSV table with ID %s not found", id)
@@ -154,93 +154,75 @@ func (db *DB) GetCSVTable(ctx context.Context, id string) (*models.CSVTable, err
 	return &csvTable, nil
 }
 
-func (db *DB) QueryDuckDBTable(
-	ctx context.Context,
-	id string,
-	tableName string,
-	limit int,
-	offset int,
-	sortCol string,
-	sortDesc bool,
-	showRowID bool,
-) ([]string, []map[string]any, [][]any, int, float64, error) {
+func (db *DB) GetCSV(ctx context.Context, params *QueryCSV) ([]string, []any, int, float64, error) {
 	startTime := time.Now()
 
-	duckConn, err := db.getDuckDBConnection(id)
+	duckConn, err := db.getDuckDBConnection(params.ID)
 	if err != nil {
-		return nil, nil, nil, 0, 0, err
+		return nil, nil, 0, 0, err
 	}
 
-	query := "SELECT "
-	if showRowID {
-		query += "row_number() OVER () as rowid, "
-	}
-	query += "* FROM " + tableName
+	sortOrder := "ASC"
+	sortColumn := "rowid"
+	limit := 500
 
-	if sortCol != "" {
-		direction := ""
-		if sortDesc {
-			direction = " DESC"
-		}
-		query += fmt.Sprintf(" ORDER BY \"%s\"%s", sortCol, direction)
+	if params.SortOrder != "ASC" {
+		sortOrder = params.SortOrder
 	}
 
-	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", limit)
+	if params.SortColumn != "" {
+		sortColumn = params.SortColumn
 	}
-	if offset > 0 {
-		query += fmt.Sprintf(" OFFSET %d", offset)
+
+	if params.Limit > 0 {
+		limit = params.Limit
+	}
+	query := "SELECT row_number() OVER () as _id, "
+	query += "* FROM " + params.TableName
+	query += fmt.Sprintf(" ORDER BY \"%s\"%s", sortColumn, sortOrder)
+	query += fmt.Sprintf(" LIMIT %d", limit)
+
+	if params.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET %d", params.Offset)
 	}
 
 	rows, err := duckConn.Query(query)
+
 	if err != nil {
-		return nil, nil, nil, 0, 0, fmt.Errorf("failed to query data: %w", err)
+		return nil, nil, 0, 0, fmt.Errorf("failed to query data: %w", err)
 	}
 	defer rows.Close()
 
 	columns, err := rows.Columns()
 	if err != nil {
-		return nil, nil, nil, 0, 0, fmt.Errorf("failed to get columns: %w", err)
+		return nil, nil, 0, 0, fmt.Errorf("failed to get columns: %w", err)
 	}
 
-	var objectRows []map[string]any
-	var arrayRows [][]any
+	var resultSet []any
 
 	for rows.Next() {
 		values := make([]any, len(columns))
 
-		scanArgs := make([]any, len(columns))
 		for i := range values {
-			scanArgs[i] = &values[i]
+			values[i] = &values[i]
 		}
 
-		if err := rows.Scan(scanArgs...); err != nil {
-			return nil, nil, nil, 0, 0, fmt.Errorf("failed to scan row: %w", err)
+		if err := rows.Scan(values...); err != nil {
+			return nil, nil, 0, 0, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		objRow := make(map[string]any)
-		arrRow := make([]any, len(columns))
+		transformResult := transformFuncs[params.Format](columns, values)
 
-		for i, col := range columns {
-			val := values[i]
-			if b, ok := val.([]byte); ok {
-				val = string(b)
-			}
-			objRow[col] = val
-			arrRow[i] = val
-		}
-
-		objectRows = append(objectRows, objRow)
-		arrayRows = append(arrayRows, arrRow)
+		resultSet = append(resultSet, transformResult)
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, nil, nil, 0, 0, fmt.Errorf("error iterating rows: %w", err)
+		return nil, nil, 0, 0, fmt.Errorf("error iterating rows: %w", err)
 	}
 
 	queryTime := float64(time.Since(startTime).Microseconds()) / 1000.0
 
-	return columns, objectRows, arrayRows, len(arrayRows), queryTime, nil
+	return columns, resultSet, len(resultSet), queryTime, nil
 }
 
 func (db *DB) QueryCSVTable(
@@ -347,9 +329,9 @@ func (db *DB) PersistToTurso(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to get table info: %w", err)
 	}
 
-	var columns []models.ColumnInfo
+	var columns []ColumnInfo
 	for rows.Next() {
-		var col models.ColumnInfo
+		var col ColumnInfo
 		if err := rows.Scan(&col.CID, &col.Name, &col.Type, &col.NotNull, &col.DefaultVal, &col.PK); err != nil {
 			rows.Close()
 			return fmt.Errorf("failed to scan column info: %w", err)
