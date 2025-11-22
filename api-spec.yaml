@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: API for loading and querying CSV data files
 servers:
-  - url: http://localhost:8001
+  - url: http://localhost:3000
 paths:
   /import:
     post:
@@ -58,21 +58,23 @@ paths:
             format: uuid
           description: UUID of the loaded CSV resource
         - in: query
-          name: size
+          name: limit
           schema:
             type: integer
             minimum: 1
           description: Limit the number of rows returned
         - in: query
-          name: sort
+          name: sortColumn
           schema:
             type: string
-          description: Column name to sort ascending
+          description: Column name to sort by
         - in: query
-          name: sort_desc
+          name: sortOrder
           schema:
             type: string
-          description: Column name to sort descending
+            enum: [DESC, ASC]
+            default: "ASC"
+          description: Sort order for sortColumn
         - in: query
           name: offset
           schema:
@@ -80,27 +82,19 @@ paths:
             minimum: 0
           description: Offset for pagination
         - in: query
-          name: shape
+          name: format
           schema:
             type: string
             enum: [objects, array]
             default: "objects"
           description: Output JSON format `objects` for array of objects, `array` for array of arrays
-        - in: query
-          name: rowid
-          schema:
-            type: boolean
-            default: true
-          description: Show or hide the `rowid` field
       responses:
         "200":
           description: CSV data retrieved successfully
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: "#/components/schemas/ResponseObjects"
-                  - $ref: "#/components/schemas/ResponseArray"
+                $ref: "#/components/schemas/CSVResponse"
         default:
           content:
             application/json:
@@ -124,6 +118,11 @@ components:
     ResponseBase:
       type: object
       properties:
+      required: [ok, query_ms, columns, total]
+
+    CSVResponse:
+      type: object
+      properties:
         ok:
           type: boolean
           example: true
@@ -139,27 +138,9 @@ components:
         total:
           type: integer
           example: 3
+        rows:
+          type: array
 
-      required: [ok, query_ms, columns, total]
-    ResponseObjects:
-      allOf:
-        - $ref: "#/components/schemas/ResponseBase"
-        - type: object
-          properties:
-            rows:
-              type: array
-              items:
-                type: object
-                additionalProperties: true
-    ResponseArray:
-      allOf:
-        - $ref: "#/components/schemas/ResponseBase"
-        - type: object
-          properties:
-            rows:
-              type: array
-              items:
-                type: array
     ErrorResponse:
       type: object
       properties:

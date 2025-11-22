@@ -20,11 +20,26 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for FetchCSVParamsShape.
+// Defines values for FetchCSVParamsSortOrder.
 const (
-	Array   FetchCSVParamsShape = "array"
-	Objects FetchCSVParamsShape = "objects"
+	ASC  FetchCSVParamsSortOrder = "ASC"
+	DESC FetchCSVParamsSortOrder = "DESC"
 )
+
+// Defines values for FetchCSVParamsFormat.
+const (
+	Array   FetchCSVParamsFormat = "array"
+	Objects FetchCSVParamsFormat = "objects"
+)
+
+// CSVResponse defines model for CSVResponse.
+type CSVResponse struct {
+	Columns []string      `json:"columns,omitempty"`
+	Ok      bool          `json:"ok,omitempty"`
+	QueryMs float64       `json:"query_ms,omitempty"`
+	Rows    []interface{} `json:"rows,omitempty"`
+	Total   int           `json:"total,omitempty"`
+}
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
@@ -39,55 +54,29 @@ type ImportResponse struct {
 	Ok       bool   `json:"ok"`
 }
 
-// ResponseArray defines model for ResponseArray.
-type ResponseArray struct {
-	Columns []string        `json:"columns"`
-	Ok      bool            `json:"ok"`
-	QueryMs float64         `json:"query_ms"`
-	Rows    [][]interface{} `json:"rows,omitempty"`
-	Total   int             `json:"total"`
-}
-
-// ResponseBase defines model for ResponseBase.
-type ResponseBase struct {
-	Columns []string `json:"columns"`
-	Ok      bool     `json:"ok"`
-	QueryMs float64  `json:"query_ms"`
-	Total   int      `json:"total"`
-}
-
-// ResponseObjects defines model for ResponseObjects.
-type ResponseObjects struct {
-	Columns []string                 `json:"columns"`
-	Ok      bool                     `json:"ok"`
-	QueryMs float64                  `json:"query_ms"`
-	Rows    []map[string]interface{} `json:"rows,omitempty"`
-	Total   int                      `json:"total"`
-}
-
 // FetchCSVParams defines parameters for FetchCSV.
 type FetchCSVParams struct {
-	// Size Limit the number of rows returned
-	Size int `form:"size,omitempty" json:"size,omitempty"`
+	// Limit Limit the number of rows returned
+	Limit int `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// Sort Column name to sort ascending
-	Sort string `form:"sort,omitempty" json:"sort,omitempty"`
+	// SortColumn Column name to sort by
+	SortColumn string `form:"sortColumn,omitempty" json:"sortColumn,omitempty"`
 
-	// SortDesc Column name to sort descending
-	SortDesc string `form:"sort_desc,omitempty" json:"sort_desc,omitempty"`
+	// SortOrder Sort order for sortColumn
+	SortOrder FetchCSVParamsSortOrder `form:"sortOrder,omitempty" json:"sortOrder,omitempty"`
 
 	// Offset Offset for pagination
 	Offset int `form:"offset,omitempty" json:"offset,omitempty"`
 
-	// Shape Output JSON format `objects` for array of objects, `array` for array of arrays
-	Shape FetchCSVParamsShape `form:"shape,omitempty" json:"shape,omitempty"`
-
-	// Rowid Show or hide the `rowid` field
-	Rowid bool `form:"rowid,omitempty" json:"rowid,omitempty"`
+	// Format Output JSON format `objects` for array of objects, `array` for array of arrays
+	Format FetchCSVParamsFormat `form:"format,omitempty" json:"format,omitempty"`
 }
 
-// FetchCSVParamsShape defines parameters for FetchCSV.
-type FetchCSVParamsShape string
+// FetchCSVParamsSortOrder defines parameters for FetchCSV.
+type FetchCSVParamsSortOrder string
+
+// FetchCSVParamsFormat defines parameters for FetchCSV.
+type FetchCSVParamsFormat string
 
 // ImportCSVParams defines parameters for ImportCSV.
 type ImportCSVParams struct {
@@ -126,25 +115,25 @@ func (w *ServerInterfaceWrapper) FetchCSV(ctx echo.Context) error {
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params FetchCSVParams
-	// ------------- Optional query parameter "size" -------------
+	// ------------- Optional query parameter "limit" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "size", ctx.QueryParams(), &params.Size)
+	err = runtime.BindQueryParameter("form", true, false, "limit", ctx.QueryParams(), &params.Limit)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter size: %s", err))
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter limit: %s", err))
 	}
 
-	// ------------- Optional query parameter "sort" -------------
+	// ------------- Optional query parameter "sortColumn" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "sort", ctx.QueryParams(), &params.Sort)
+	err = runtime.BindQueryParameter("form", true, false, "sortColumn", ctx.QueryParams(), &params.SortColumn)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter sort: %s", err))
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter sortColumn: %s", err))
 	}
 
-	// ------------- Optional query parameter "sort_desc" -------------
+	// ------------- Optional query parameter "sortOrder" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "sort_desc", ctx.QueryParams(), &params.SortDesc)
+	err = runtime.BindQueryParameter("form", true, false, "sortOrder", ctx.QueryParams(), &params.SortOrder)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter sort_desc: %s", err))
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter sortOrder: %s", err))
 	}
 
 	// ------------- Optional query parameter "offset" -------------
@@ -154,18 +143,11 @@ func (w *ServerInterfaceWrapper) FetchCSV(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter offset: %s", err))
 	}
 
-	// ------------- Optional query parameter "shape" -------------
+	// ------------- Optional query parameter "format" -------------
 
-	err = runtime.BindQueryParameter("form", true, false, "shape", ctx.QueryParams(), &params.Shape)
+	err = runtime.BindQueryParameter("form", true, false, "format", ctx.QueryParams(), &params.Format)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter shape: %s", err))
-	}
-
-	// ------------- Optional query parameter "rowid" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "rowid", ctx.QueryParams(), &params.Rowid)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter rowid: %s", err))
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter format: %s", err))
 	}
 
 	// Invoke the callback with all the unmarshaled arguments
@@ -234,26 +216,25 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/8RXW3PbNhP9Kxh83yOtmx0l4VviplN30li1nLw4mggilhIS4hIAVKJ69N87u9SFoihf",
-	"ptPpkyjics7unj0A73lmtbMGTAw8vechW4AW9PjOe+tvIDhrAuAL560DHxXQMOAwPsSVA57yEL0yc75O",
-	"uIYQxBxax6LSEKLQDkdz67WIPOVSRDjDIZ40l6wT7uF7qTxInt7V1icbBnu8yW6xnX2FLCLelXbWxwei",
-	"MNJZZSI9/xTaFbh+EaNLu93CZqJY2BDTV71evyuc6vYH53DxYvjyDF69np31B/L8TFy8GJ5dDIbD/kX/",
-	"5UWv1+PJPrLSq+OYEm6/HQBGX8Ju1szaAoQ5Ct1+w5i3fNuC3Yb5xnuxQgBRFNc5T+/u+f895Dzl/+vu",
-	"y93d1Lq7XfZWBODrpJkib3/Qr4qgQ62oglDWSeP/+ojYpEaNMI6qkNmi1CYc5OQOgZXkCf9DhaCs4Qkf",
-	"eTv3QpNOLq0JVmsRlTVMArscYU6aJGvKa7B+UgkS/r0Ev/qiD7kNOsNX/V5/+HowqNVa2nJW1CRsSj0D",
-	"T9g2iuJgh/PdLGUizHFaW7l36MkuR9vdHhLANb0J/54EhJQKEy+KUW3iQQ73rB7XB75UJre4tYSQeeVw",
-	"d57yN6MrllvPCiukMnMmjGSUFPxzOf7EpIiC5aoAyoyK1L84cPNufMvejK54wpfgQ7Vdv9Pr9Kj6Doxw",
-	"iqf8vNPvYMs6ERcUG/X5vZJr/DOHeEzqBqJXsASGeWG5t5oJ5jwslS1DsSKyIInebMU+frz6hROiJ7Fe",
-	"SZ7yXyFmi8vxJwL2QkMEH6hMh1C4mNmcxQXUt/UQbOkzFJvCaUieJ9wITZLCrtlrqSpLVeoD2y1Lmnnk",
-	"uE0S75VWkShUkkZCFLqHWHoDckuDKrPnEdRfyHCPrJVRutQ87bfJvwl7SYpnuBmLlgXrIxMhA4NKOAVp",
-	"fTyAfDS4NhSc8SjMF5z1PKzrPA8QSdBOzJUhPZyAsDS3PX29p6TvuoyujOz38fUHVpWcTauWC1OiQA2J",
-	"tdy8TdiUXjVG6SGcSsRCuMMaS8hFWcRdfwc6tZD1Xe1NZQaTJ4hvvLA/mPVsoSSQBqd0LkxZrqA4pbzt",
-	"0dFC68RZO8GOqUyQXGDQ61Unk4lQXQ+Ec4XKqGTdrwG53df2twae4bNbg8ZwnzK/OtE3TtnQ79YE/caV",
-	"JAtllkEIeVkUdNTtYn9GPA+xOrwZrtfEKpRaC7/iKf8Ta1F3K6RHxt9VdB2jC4ANLc5aXdeYoGXo6mig",
-	"wUGmcnJ8UHEBngn28eZ9dQ6wnX1+NtbjdOftUtFhgWqhTai58ego3fYgwTEEUYYe0S0hRDazctX5bI78",
-	"uiL2BMP+7fZ2ROw2pr0LJFq2ib5dsqUveLtLt10hj/vkA8bYBP2xAFMLWioPWSxWJyjQz0OGNqmOFQjx",
-	"rZWrhp4i/IzdLCwPdbQLY6aMILDmpkeKvq1HsAFoRrJUgk2R77QpA77+h538kPIbnxMt5Me13qv1wH/Q",
-	"hse9tLmpkDr9JplVDAH8cqtnFGLLJ9A5ftmsJ+u/AwAA//997+p4Mg4AAA==",
+	"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",
+	"/UKGzTEMAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
