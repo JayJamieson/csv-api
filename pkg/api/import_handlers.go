@@ -287,7 +287,7 @@ func (h *Server) fillStagedMapping(ctx context.Context, importID, supplier, spoo
 	}
 	if mappings == nil {
 		samples, _ := h.db.SampleStaging(ctx, importID, 100)
-		prop := sniff.ProposeMapping(report.Columns, samples)
+		prop := h.registry.Propose(report.Columns, samples)
 		mappings = prop.Mappings
 		for _, m := range prop.Missing {
 			resp.MissingFields = append(resp.MissingFields, string(m))
@@ -386,7 +386,7 @@ func (h *Server) commitStaged(ctx echo.Context, importID, supplier, spoolPath st
 	}
 
 	if err := loader.Promote(reqCtx, db.StagingTable, db.TypedTable,
-		db.QuarantineTable, report, mappings, res); err != nil {
+		db.QuarantineTable, report, mappings, h.registry, res); err != nil {
 		return nil, err
 	}
 

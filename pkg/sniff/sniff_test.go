@@ -292,7 +292,7 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := l.Promote(ctx, "staging", "typed", "quarantine", rep, prop.Mappings, res); err != nil {
+	if err := l.Promote(ctx, "staging", "typed", "quarantine", rep, prop.Mappings, DefaultRegistry(), res); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"time"
 
 	duckdb "github.com/marcboeker/go-duckdb/v2"
@@ -11,6 +12,25 @@ type transformFunc func(columns []string, values []any) any
 var transformFuncs = map[string]transformFunc{
 	"array":   transformArray,
 	"objects": transformObject,
+}
+
+// resolveTransform looks up the row-shaping function for a `format` query
+// param. oapi-codegen's query binding does not apply the OpenAPI spec's
+// declared default ("objects") for value-typed params — an omitted format
+// arrives here as "", not "objects" — so that case is defaulted explicitly.
+// Anything else that isn't a known shape is a bad request and returns an
+// error; the caller must not index transformFuncs directly, since a map miss
+// there silently yields a nil func that panics when called.
+func resolveTransform(format string) (transformFunc, error) {
+	f := format
+	if f == "" {
+		f = "objects"
+	}
+	fn, ok := transformFuncs[f]
+	if !ok {
+		return nil, fmt.Errorf("invalid format %q: must be \"objects\" or \"array\"", format)
+	}
+	return fn, nil
 }
 
 type CSVTable struct {

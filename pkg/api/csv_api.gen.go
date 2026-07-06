@@ -20,6 +20,30 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for CreateFieldTypeRequestValueKind.
+const (
+	CreateFieldTypeRequestValueKindBarcode  CreateFieldTypeRequestValueKind = "barcode"
+	CreateFieldTypeRequestValueKindCode     CreateFieldTypeRequestValueKind = "code"
+	CreateFieldTypeRequestValueKindCurrency CreateFieldTypeRequestValueKind = "currency"
+	CreateFieldTypeRequestValueKindDate     CreateFieldTypeRequestValueKind = "date"
+	CreateFieldTypeRequestValueKindFreetext CreateFieldTypeRequestValueKind = "freetext"
+	CreateFieldTypeRequestValueKindInteger  CreateFieldTypeRequestValueKind = "integer"
+	CreateFieldTypeRequestValueKindText     CreateFieldTypeRequestValueKind = "text"
+	CreateFieldTypeRequestValueKindUom      CreateFieldTypeRequestValueKind = "uom"
+)
+
+// Defines values for FieldTypeDefValueKind.
+const (
+	FieldTypeDefValueKindBarcode  FieldTypeDefValueKind = "barcode"
+	FieldTypeDefValueKindCode     FieldTypeDefValueKind = "code"
+	FieldTypeDefValueKindCurrency FieldTypeDefValueKind = "currency"
+	FieldTypeDefValueKindDate     FieldTypeDefValueKind = "date"
+	FieldTypeDefValueKindFreetext FieldTypeDefValueKind = "freetext"
+	FieldTypeDefValueKindInteger  FieldTypeDefValueKind = "integer"
+	FieldTypeDefValueKindText     FieldTypeDefValueKind = "text"
+	FieldTypeDefValueKindUom      FieldTypeDefValueKind = "uom"
+)
+
 // Defines values for LoadResponseHeaderConfidence.
 const (
 	High   LoadResponseHeaderConfidence = "high"
@@ -57,6 +81,12 @@ const (
 	Manual LoadCSVParamsMode = "manual"
 )
 
+// AddSynonymRequest defines model for AddSynonymRequest.
+type AddSynonymRequest struct {
+	// Synonym Normalized header-name fragment, e.g. nett_ea
+	Synonym string `json:"synonym"`
+}
+
 // CSVResponse defines model for CSVResponse.
 type CSVResponse struct {
 	Columns []string      `json:"columns,omitempty"`
@@ -92,6 +122,18 @@ type CommitResponse struct {
 	Warnings                    []string           `json:"warnings,omitempty"`
 }
 
+// CreateFieldTypeRequest defines model for CreateFieldTypeRequest.
+type CreateFieldTypeRequest struct {
+	// Key Stable identifier; snake_case recommended, must be unique
+	Key       string                          `json:"key"`
+	Label     string                          `json:"label"`
+	Required  bool                            `json:"required,omitempty"`
+	ValueKind CreateFieldTypeRequestValueKind `json:"value_kind,omitempty"`
+}
+
+// CreateFieldTypeRequestValueKind defines model for CreateFieldTypeRequest.ValueKind.
+type CreateFieldTypeRequestValueKind string
+
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Error     string    `json:"error"`
@@ -108,6 +150,44 @@ type FieldMapping struct {
 	Notes        string `json:"notes,omitempty"`
 	SourceColumn string `json:"source_column"`
 	SourceIndex  int    `json:"source_index"`
+}
+
+// FieldTypeDef defines model for FieldTypeDef.
+type FieldTypeDef struct {
+	// Builtin True for the compiled-in field set, false for anything added via this API
+	Builtin bool `json:"builtin"`
+
+	// ClaimOrder Lower claims a contested column first; new fields default to 100
+	ClaimOrder int    `json:"claim_order"`
+	Key        string `json:"key"`
+	Label      string `json:"label"`
+
+	// Required Must be mapped (and non-null after cleaning) before commit
+	Required bool `json:"required"`
+
+	// ValueKind Which value classifier the field uses for value-based mapping
+	// evidence and for cleaning/typing at commit. text = generic VARCHAR
+	// passthrough with no value signal (the "no sensible option" catch-all:
+	// mapping a column here keeps it as-is; leaving it unmapped drops it).
+	ValueKind FieldTypeDefValueKind `json:"value_kind"`
+}
+
+// FieldTypeDefValueKind Which value classifier the field uses for value-based mapping
+// evidence and for cleaning/typing at commit. text = generic VARCHAR
+// passthrough with no value signal (the "no sensible option" catch-all:
+// mapping a column here keeps it as-is; leaving it unmapped drops it).
+type FieldTypeDefValueKind string
+
+// FieldTypeResponse defines model for FieldTypeResponse.
+type FieldTypeResponse struct {
+	Field FieldTypeDef `json:"field"`
+	Ok    bool         `json:"ok"`
+}
+
+// FieldTypesResponse defines model for FieldTypesResponse.
+type FieldTypesResponse struct {
+	Fields []FieldTypeDef `json:"fields"`
+	Ok     bool           `json:"ok"`
 }
 
 // HeaderCandidate defines model for HeaderCandidate.
@@ -255,6 +335,12 @@ type LoadCSVParams struct {
 // LoadCSVParamsMode defines parameters for LoadCSV.
 type LoadCSVParamsMode string
 
+// CreateFieldTypeJSONRequestBody defines body for CreateFieldType for application/json ContentType.
+type CreateFieldTypeJSONRequestBody = CreateFieldTypeRequest
+
+// AddFieldSynonymJSONRequestBody defines body for AddFieldSynonym for application/json ContentType.
+type AddFieldSynonymJSONRequestBody = AddSynonymRequest
+
 // CommitImportJSONRequestBody defines body for CommitImport for application/json ContentType.
 type CommitImportJSONRequestBody = CommitRequest
 
@@ -266,6 +352,15 @@ type ServerInterface interface {
 	// Query loaded CSV data
 	// (GET /api/{id})
 	FetchCSV(ctx echo.Context, id openapi_types.UUID, params FetchCSVParams) error
+	// List canonical field types available for column mapping
+	// (GET /field-types)
+	ListFieldTypes(ctx echo.Context) error
+	// Define a new canonical field type
+	// (POST /field-types)
+	CreateFieldType(ctx echo.Context) error
+	// Teach a header-name synonym for an existing field type
+	// (POST /field-types/{key}/synonyms)
+	AddFieldSynonym(ctx echo.Context, key string) error
 	// Import a CSV file from a URL or upload
 	// (POST /import)
 	ImportCSV(ctx echo.Context, params ImportCSVParams) error
@@ -338,6 +433,40 @@ func (w *ServerInterfaceWrapper) FetchCSV(ctx echo.Context) error {
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.FetchCSV(ctx, id, params)
+	return err
+}
+
+// ListFieldTypes converts echo context to params.
+func (w *ServerInterfaceWrapper) ListFieldTypes(ctx echo.Context) error {
+	var err error
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.ListFieldTypes(ctx)
+	return err
+}
+
+// CreateFieldType converts echo context to params.
+func (w *ServerInterfaceWrapper) CreateFieldType(ctx echo.Context) error {
+	var err error
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CreateFieldType(ctx)
+	return err
+}
+
+// AddFieldSynonym converts echo context to params.
+func (w *ServerInterfaceWrapper) AddFieldSynonym(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "key" -------------
+	var key string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "key", ctx.Param("key"), &key, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter key: %s", err))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.AddFieldSynonym(ctx, key)
 	return err
 }
 
@@ -505,6 +634,9 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 	}
 
 	router.GET(baseURL+"/api/:id", wrapper.FetchCSV)
+	router.GET(baseURL+"/field-types", wrapper.ListFieldTypes)
+	router.POST(baseURL+"/field-types", wrapper.CreateFieldType)
+	router.POST(baseURL+"/field-types/:key/synonyms", wrapper.AddFieldSynonym)
 	router.POST(baseURL+"/import", wrapper.ImportCSV)
 	router.POST(baseURL+"/imports/:id/commit", wrapper.CommitImport)
 	router.GET(baseURL+"/imports/:id/quarantine", wrapper.GetQuarantine)
@@ -516,58 +648,76 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"Xy8AAA==",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

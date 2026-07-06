@@ -181,6 +181,12 @@ func (db *DB) GetCSV(ctx context.Context, params *QueryCSV) ([]string, []any, in
 	if params.Limit > 0 {
 		limit = params.Limit
 	}
+
+	transform, err := resolveTransform(params.Format)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
+
 	query := "SELECT row_number() OVER () as _id, "
 	query += "* FROM " + params.TableName
 	query += fmt.Sprintf(" ORDER BY \"%s\"%s", sortColumn, sortOrder)
@@ -215,9 +221,7 @@ func (db *DB) GetCSV(ctx context.Context, params *QueryCSV) ([]string, []any, in
 			return nil, nil, 0, 0, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		transformResult := transformFuncs[params.Format](columns, values)
-
-		resultSet = append(resultSet, transformResult)
+		resultSet = append(resultSet, transform(columns, values))
 	}
 
 	if err = rows.Err(); err != nil {

@@ -10,15 +10,15 @@ import (
 // LoadResult reports what happened during a staged import. This is the
 // quality signal the old "Status=Success" log never had.
 type LoadResult struct {
-	StagingTable    string         `json:"staging_table"`
-	TypedTable      string         `json:"typed_table,omitempty"`
-	QuarantineTable string         `json:"quarantine_table,omitempty"`
-	RowsRaw         int64          `json:"rows_raw"`       // rows landed in staging
-	RowsTyped       int64          `json:"rows_typed"`     // rows promoted
-	RowsQuarantined int64          `json:"rows_quarantined"`
-	RowsFiltered    RowsFiltered   `json:"rows_filtered"`  // structural noise removed
+	StagingTable    string             `json:"staging_table"`
+	TypedTable      string             `json:"typed_table,omitempty"`
+	QuarantineTable string             `json:"quarantine_table,omitempty"`
+	RowsRaw         int64              `json:"rows_raw"`   // rows landed in staging
+	RowsTyped       int64              `json:"rows_typed"` // rows promoted
+	RowsQuarantined int64              `json:"rows_quarantined"`
+	RowsFiltered    RowsFiltered       `json:"rows_filtered"`        // structural noise removed
 	NullRates       map[string]float64 `json:"null_rates,omitempty"` // per mapped field
-	Warnings        []string       `json:"warnings,omitempty"`
+	Warnings        []string           `json:"warnings,omitempty"`
 }
 
 // RowsFiltered counts structural noise removed before typing.
@@ -85,12 +85,12 @@ func (l *Loader) LoadStaging(ctx context.Context, path, table string, rep *Struc
 	return res, nil
 }
 
-// FieldType returns the DuckDB target type for a canonical field.
-func FieldType(f CanonicalField) string {
-	switch f {
-	case FieldPrice, FieldListPrice, FieldDiscount:
+// FieldType returns the DuckDB target type for a value_kind.
+func FieldType(kind ValueKind) string {
+	switch kind {
+	case KindCurrency:
 		return "DECIMAL(12,4)"
-	case FieldQtyBreak:
+	case KindInteger:
 		return "INTEGER"
 	default:
 		return "VARCHAR"
@@ -98,20 +98,23 @@ func FieldType(f CanonicalField) string {
 }
 
 // cleanExpr wraps a source column in the cleaning + TRY_CAST expression for
-// its target field. Currency cleaning strips $, thousands separators,
+// its target value_kind. Currency cleaning strips $, thousands separators,
 // accounting-style parens (negative), and stray whitespace before casting.
-func cleanExpr(src string, f CanonicalField) string {
+// Keying off value_kind rather than the canonical field means a user-added
+// field with value_kind=currency gets real cleaning/typing for free, instead
+// of silently falling through to VARCHAR passthrough.
+func cleanExpr(src string, kind ValueKind) string {
 	col := quoteIdent(src)
-	switch f {
-	case FieldPrice, FieldListPrice, FieldDiscount:
+	switch kind {
+	case KindCurrency:
 		return fmt.Sprintf(`TRY_CAST(
 			CASE WHEN regexp_matches(trim(%[1]s), '^\(.*\)$')
 			     THEN '-' || regexp_replace(regexp_replace(trim(%[1]s), '[\(\)\$,%%\s]', '', 'g'), '^-', '', 'g')
 			     ELSE regexp_replace(trim(%[1]s), '[\$,%%\s]', '', 'g')
 			END AS DECIMAL(12,4))`, col)
-	case FieldQtyBreak:
+	case KindInteger:
 		return fmt.Sprintf(`TRY_CAST(regexp_replace(trim(%s), '[,\s]', '', 'g') AS INTEGER)`, col)
-	case FieldUOM:
+	case KindUOM:
 		return fmt.Sprintf(`upper(trim(%s))`, col)
 	default:
 		return fmt.Sprintf(`nullif(trim(%s), '')`, col)
@@ -121,10 +124,15 @@ func cleanExpr(src string, f CanonicalField) string {
 // Promote filters structural noise from staging, applies the mapping, cleans
 // and types values, and splits output into typed + quarantine tables.
 //
+// reg supplies which fields are required and what value_kind each mapped
+// field cleans/types as. Passing the registry through (rather than reading a
+// package-level required-fields list) means a required or typed custom field
+// added via the field-types API is honored here exactly like a builtin.
+//
 // Quarantine criteria: a required field is NULL after cleaning — either it
 // was empty in the source or TRY_CAST failed. The reason column says which.
 func (l *Loader) Promote(ctx context.Context, staging, typed, quarantine string,
-	rep *StructureReport, mapping []FieldMapping, res *LoadResult) error {
+	rep *StructureReport, mapping []FieldMapping, reg *FieldRegistry, res *LoadResult) error {
 
 	res.TypedTable = typed
 	res.QuarantineTable = quarantine
@@ -168,10 +176,10 @@ func (l *Loader) Promote(ctx context.Context, staging, typed, quarantine string,
 		if m.Field == FieldUnknown {
 			continue
 		}
-		expr := cleanExpr(m.SourceColumn, m.Field)
+		expr := cleanExpr(m.SourceColumn, reg.ValueKind(m.Field))
 		field := quoteIdent(string(m.Field))
 		selects = append(selects, fmt.Sprintf("%s AS %s", expr, field))
-		if isRequired(m.Field) {
+		if reg.IsRequired(m.Field) {
 			requiredNullConds = append(requiredNullConds,
 				fmt.Sprintf("%s IS NULL", field))
 			requiredNullCondsC = append(requiredNullCondsC,
@@ -245,21 +253,12 @@ func (l *Loader) Promote(ctx context.Context, staging, typed, quarantine string,
 			return err
 		}
 		res.NullRates[string(m.Field)] = rate
-		if rate > 0.2 && !isRequired(m.Field) {
+		if rate > 0.2 && !reg.IsRequired(m.Field) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
 				"field %q is %.0f%% NULL after typing — check mapping", m.Field, rate*100))
 		}
 	}
 	return nil
-}
-
-func isRequired(f CanonicalField) bool {
-	for _, r := range requiredFields {
-		if r == f {
-			return true
-		}
-	}
-	return false
 }
 
 // --- SQL fragment builders ---

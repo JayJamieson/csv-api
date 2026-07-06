@@ -23,9 +23,11 @@ type Config struct {
 }
 
 type Server struct {
-	config Config
-	router *echo.Echo
-	db     *db.DB
+	config        Config
+	router        *echo.Echo
+	db            *db.DB
+	registry      *sniff.FieldRegistry
+	registryStore *sniff.RegistryStore
 }
 
 func New(config Config) (*Server, error) {
@@ -54,6 +56,21 @@ func New(config Config) (*Server, error) {
 	if err := mappingStore.Migrate(migrateCtx); err != nil {
 		return nil, fmt.Errorf("failed to migrate csv_mappings: %w", err)
 	}
+
+	// Field-type registry: seeds field_type/field_synonym from the compiled-in
+	// builtins on first run, then loads whatever's in the DB (builtins plus
+	// anything added since through the field-types API) as the live registry
+	// every proposal and commit goes through.
+	registryStore := &sniff.RegistryStore{DB: database.Meta()}
+	if err := registryStore.Migrate(migrateCtx); err != nil {
+		return nil, fmt.Errorf("failed to migrate field_type registry: %w", err)
+	}
+	registry, err := registryStore.LoadRegistry(migrateCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load field_type registry: %w", err)
+	}
+	server.registry = registry
+	server.registryStore = registryStore
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())

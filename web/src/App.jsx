@@ -29,10 +29,12 @@ const T = {
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 const SANS = "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
 
-/* Canonical fields — mirrors pkg/sniff/mapping.go. Order + required flag
- * match the backend so this UI never proposes a field the API won't accept. */
-const FIELDS = [
-  { key: "", label: "— unmapped —", req: false },
+/* Fallback only — used if GET /field-types can't be reached (e.g. before the
+ * field_type table is migrated). The live list always comes from the API now
+ * (see FieldTypesProvider below), so a field added via POST /field-types
+ * shows up here without a UI change; this is just so the dropdown isn't
+ * empty while that request is in flight or if it fails. */
+const FALLBACK_FIELDS = [
   { key: "sku", label: "SKU / product code", req: true },
   { key: "description", label: "Description", req: true },
   { key: "price", label: "Price (trade/cost)", req: true },
@@ -44,8 +46,8 @@ const FIELDS = [
   { key: "discount", label: "Discount", req: false },
   { key: "qty_break", label: "Qty break", req: false },
 ];
-const REQUIRED = FIELDS.filter((f) => f.req).map((f) => f.key);
-const fieldLabel = (k) => FIELDS.find((f) => f.key === k)?.label ?? k;
+const UNMAPPED = { key: "", label: "— unmapped —", req: false };
+const VALUE_KINDS = ["text", "currency", "integer", "barcode", "uom", "date", "code", "freetext"];
 
 function confBucket(c) {
   if (c >= 0.75) return "high";
@@ -107,6 +109,60 @@ async function apiQuarantine(importId) {
 }
 
 const quarantineCsvUrl = (importId) => `/imports/${importId}/quarantine?format=csv`;
+
+async function apiFieldTypes() {
+  const r = await fetch("/field-types");
+  if (!r.ok) throw new Error(await apiError(r));
+  const j = await r.json();
+  return j.fields || [];
+}
+
+async function apiCreateFieldType({ key, label, value_kind, required }) {
+  const r = await fetch("/field-types", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, label, value_kind, required }),
+  });
+  if (!r.ok) throw new Error(await apiError(r));
+  return r.json();
+}
+
+/* ================================================================== *
+ * Field-type registry — fetched from the backend so the mapping dropdown
+ * always matches what /commit will actually accept, and a field added via
+ * POST /field-types shows up here without a UI redeploy.
+ * ================================================================== */
+const FieldTypesContext = React.createContext(null);
+
+function useFieldTypes() {
+  const ctx = React.useContext(FieldTypesContext);
+  if (!ctx) throw new Error("useFieldTypes used outside FieldTypesProvider");
+  return ctx;
+}
+
+function FieldTypesProvider({ children }) {
+  const [defs, setDefs] = useState(null); // null while the first fetch is in flight
+  const [fetchError, setFetchError] = useState(null);
+
+  const refresh = useCallback(() => {
+    apiFieldTypes()
+      .then((fields) => { setDefs(fields); setFetchError(null); })
+      .catch((e) => { setFetchError(e.message); setDefs((d) => d ?? FALLBACK_FIELDS); });
+  }, []);
+
+  React.useEffect(() => { refresh(); }, [refresh]);
+
+  const value = useMemo(() => {
+    const known = defs || FALLBACK_FIELDS;
+    const mapped = known.map((f) => ({ key: f.key, label: f.label, req: !!f.required }));
+    const fields = [UNMAPPED, ...mapped];
+    const required = mapped.filter((f) => f.req).map((f) => f.key);
+    const fieldLabel = (k) => fields.find((f) => f.key === k)?.label ?? k;
+    return { fields, required, fieldLabel, loading: defs === null, fetchError, refresh };
+  }, [defs, fetchError, refresh]);
+
+  return <FieldTypesContext.Provider value={value}>{children}</FieldTypesContext.Provider>;
+}
 
 /* ================================================================== *
  * Small presentational pieces
@@ -295,6 +351,7 @@ function HeaderPicker({ candidates, onChoose, onCancel, busy }) {
  * Column mapping editor — the header cell of the preview grid.
  * ================================================================== */
 function ColumnHead({ col, mapping, onChange, duplicate }) {
+  const { fields, fieldLabel } = useFieldTypes();
   const conf = mapping.field ? confBucket(mapping.confidence) : "low";
   const unmapped = !mapping.field;
   const tint = unmapped ? T.lowBg : confBg[conf];
@@ -324,7 +381,7 @@ function ColumnHead({ col, mapping, onChange, duplicate }) {
               borderRadius: 5, padding: "6px 8px", fontFamily: SANS,
             }}
           >
-            {FIELDS.map((f) => (
+            {fields.map((f) => (
               <option key={f.key} value={f.key}>{f.label}{f.req ? " *" : ""}</option>
             ))}
           </select>
@@ -352,10 +409,84 @@ function ColumnHead({ col, mapping, onChange, duplicate }) {
   );
 }
 
+/* Lets a user define a field on the spot when no existing mapping option
+ * fits a column — the actual fix for "no sensible option", not a workaround.
+ * value_kind=text (the default) is a safe passthrough: it types as VARCHAR
+ * and can never fail a cast, so a hastily-added field can't break a commit. */
+function AddFieldType() {
+  const { refresh } = useFieldTypes();
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState("");
+  const [label, setLabel] = useState("");
+  const [valueKind, setValueKind] = useState("text");
+  const [required, setRequired] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!key.trim() || !label.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await apiCreateFieldType({ key: key.trim(), label: label.trim(), value_kind: valueKind, required });
+      setKey(""); setLabel(""); setValueKind("text"); setRequired(false);
+      setOpen(false);
+      refresh();
+    } catch (e2) {
+      setErr(e2.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="text-xs mb-2" style={{ color: T.navy }}>
+        + add field type
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-wrap items-end gap-3 mb-4 px-3 py-3"
+      style={{ background: T.panel, border: `1px solid ${T.line}`, borderRadius: 8 }}>
+      <div className="flex flex-col">
+        <label className="text-xs mb-0.5" style={{ color: T.mut }}>Key</label>
+        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="pack_qty"
+          className="text-sm px-2 py-1" style={{ border: `1px solid ${T.line}`, borderRadius: 5, fontFamily: MONO }} />
+      </div>
+      <div className="flex flex-col">
+        <label className="text-xs mb-0.5" style={{ color: T.mut }}>Label</label>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Pack quantity"
+          className="text-sm px-2 py-1" style={{ border: `1px solid ${T.line}`, borderRadius: 5 }} />
+      </div>
+      <div className="flex flex-col">
+        <label className="text-xs mb-0.5" style={{ color: T.mut }}>Value kind</label>
+        <select value={valueKind} onChange={(e) => setValueKind(e.target.value)}
+          className="text-sm px-2 py-1" style={{ border: `1px solid ${T.line}`, borderRadius: 5 }}>
+          {VALUE_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+        </select>
+      </div>
+      <label className="flex items-center gap-1.5 text-xs pb-1.5" style={{ color: T.mut }}>
+        <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} />
+        required
+      </label>
+      <button type="submit" disabled={busy} className="text-sm px-3 py-1.5"
+        style={{ background: T.navy, color: T.navyInk, borderRadius: 5, opacity: busy ? 0.6 : 1 }}>
+        {busy ? "Adding…" : "Add field"}
+      </button>
+      <button type="button" onClick={() => setOpen(false)} className="text-xs" style={{ color: T.mut }}>cancel</button>
+      {err && <div className="text-xs w-full" style={{ color: T.low }}>{err}</div>}
+    </form>
+  );
+}
+
 /* ================================================================== *
  * Review screen
  * ================================================================== */
 function Review({ load, candidates, onCommit, onReheader, onReset, error, onDismissError }) {
+  const { required: REQUIRED, fieldLabel } = useFieldTypes();
   const [mappings, setMappings] = useState(() =>
     load.proposed_mappings.map((m) => ({ ...m }))
   );
@@ -479,6 +610,9 @@ function Review({ load, candidates, onCommit, onReheader, onReset, error, onDism
         <span className="text-xs" style={{ color: T.mut, letterSpacing: 0.3 }}>
           Set each column’s meaning in its header. Tint shows the parser’s confidence.
         </span>
+      </div>
+      <div className="mb-2">
+        <AddFieldType />
       </div>
       <div className="overflow-x-auto mb-6" style={{ border: `1px solid ${T.line}`, borderRadius: 8 }}>
         <table className="w-full border-collapse" style={{ background: T.panel }}>
@@ -763,6 +897,14 @@ function Shell({ children, load, onReset }) {
  * Root — real backend flow
  * ================================================================== */
 export default function App() {
+  return (
+    <FieldTypesProvider>
+      <AppScreens />
+    </FieldTypesProvider>
+  );
+}
+
+function AppScreens() {
   const [screen, setScreen] = useState("pick"); // pick | review | result
   const [load, setLoad] = useState(null);
   const [candidates, setCandidates] = useState([]); // remembered across redetects

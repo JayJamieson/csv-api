@@ -3,19 +3,23 @@ package sniff
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
-// CanonicalField is a target field in the price-book domain model.
+// CanonicalField is a target field in the price-book domain model. Its valid
+// set is no longer compiled in: a FieldRegistry holds whichever fields are
+// known at runtime, builtin or user-added.
 type CanonicalField string
 
 const (
 	FieldSKU         CanonicalField = "sku"
 	FieldDescription CanonicalField = "description"
-	FieldPrice       CanonicalField = "price"       // primary trade/cost price
-	FieldListPrice   CanonicalField = "list_price"  // RRP / list
+	FieldPrice       CanonicalField = "price"      // primary trade/cost price
+	FieldListPrice   CanonicalField = "list_price" // RRP / list
 	FieldUOM         CanonicalField = "uom"
 	FieldBarcode     CanonicalField = "barcode"
 	FieldCategory    CanonicalField = "category"
@@ -24,6 +28,32 @@ const (
 	FieldQtyBreak    CanonicalField = "qty_break"
 	FieldUnknown     CanonicalField = ""
 )
+
+// ValueKind names a value-shape classifier. Fields declare which kind they
+// are instead of each carrying its own bespoke pattern-matching code, so a
+// new field (e.g. a supplier-specific "pack_qty") just picks an existing kind
+// and inherits its classifier for free.
+type ValueKind string
+
+const (
+	KindText     ValueKind = "text"     // no reliable value signal; name-only
+	KindCurrency ValueKind = "currency" // $1,234.50, (12.00), 5%
+	KindInteger  ValueKind = "integer"  // plain numeric counts
+	KindBarcode  ValueKind = "barcode"  // EAN/UPC/GTIN digit runs
+	KindUOM      ValueKind = "uom"      // unit-of-measure vocabulary
+	KindDate     ValueKind = "date"     // dd/mm/yyyy-ish
+	KindCode     ValueKind = "code"     // near-unique alnum product/SKU codes
+	KindFreetext ValueKind = "freetext" // long wordy text (descriptions)
+)
+
+func validValueKind(k ValueKind) bool {
+	switch k {
+	case KindText, KindCurrency, KindInteger, KindBarcode, KindUOM, KindDate, KindCode, KindFreetext:
+		return true
+	default:
+		return false
+	}
+}
 
 // FieldMapping proposes a canonical field for one source column.
 type FieldMapping struct {
@@ -38,20 +68,81 @@ type FieldMapping struct {
 
 // MappingProposal is the full suggestion for an import.
 type MappingProposal struct {
-	Fingerprint string         `json:"fingerprint"`
-	Mappings    []FieldMapping `json:"mappings"`
+	Fingerprint string           `json:"fingerprint"`
+	Mappings    []FieldMapping   `json:"mappings"`
 	Missing     []CanonicalField `json:"missing"` // required fields with no candidate
-	Warnings    []string       `json:"warnings,omitempty"`
+	Warnings    []string         `json:"warnings,omitempty"`
 }
 
-// requiredFields must be mapped (by suggestion or human) before commit.
-var requiredFields = []CanonicalField{FieldSKU, FieldDescription, FieldPrice}
+// FieldDef is one canonical field known to a FieldRegistry: builtin or
+// user-added, they are handled identically everywhere downstream.
+type FieldDef struct {
+	Key        CanonicalField `json:"key"`
+	Label      string         `json:"label"`
+	ValueKind  ValueKind      `json:"value_kind"`
+	Required   bool           `json:"required"`
+	ClaimOrder int            `json:"claim_order"`
+	Builtin    bool           `json:"builtin"`
+}
 
-// synonyms maps canonical fields to normalized header-name fragments seen in
-// AU/NZ plumbing, electrical, and building supplier price books. Matching is
-// substring-based over the normalized (snake_case) header, so "trade_price_ex_gst"
-// hits both "trade" and "price".
-var synonyms = map[CanonicalField][]string{
+// FieldRegistry holds the set of canonical fields, their synonym lists, and
+// (indirectly, via ValueKind) their value classifiers. ProposeMapping used to
+// read package-level vars; those are now just the seed for DefaultRegistry,
+// and every proposal goes through a registry so a DB-backed one (loaded with
+// user-added fields and taught synonyms) behaves identically to the builtin
+// set from the caller's point of view.
+// A registry is shared across concurrent HTTP handlers and, unlike the
+// package-level vars it replaces, is mutable at runtime (AddField/AddSynonym
+// via the /field-types API) — so every access goes through mu.
+type FieldRegistry struct {
+	mu       sync.RWMutex
+	fields   []FieldDef
+	synonyms map[CanonicalField][]string
+}
+
+// DefaultRegistry returns a registry seeded with the compiled-in AU/NZ
+// plumbing/electrical/building-supplier field set. It exists so callers that
+// don't have (or don't need) a DB-backed registry — unit tests, the corpus
+// scanner run without a database — get the exact behavior the hardcoded
+// version used to provide.
+func DefaultRegistry() *FieldRegistry {
+	r := &FieldRegistry{synonyms: map[CanonicalField][]string{}}
+	for _, d := range builtinFields {
+		r.fields = append(r.fields, d)
+	}
+	for f, syns := range builtinSynonyms {
+		r.synonyms[f] = append([]string(nil), syns...)
+	}
+	return r
+}
+
+// builtinFields is the compiled-in field set and claim order. Lower
+// ClaimOrder claims a column first; more specific/higher-signal fields go
+// first so e.g. list_price wins "rrp" before the generic price pattern sees
+// it. New fields added at runtime default to ClaimOrder 100 (tied with
+// description, last), so builtins always get first refusal on a column.
+var builtinFields = []FieldDef{
+	{Key: FieldBarcode, Label: "Barcode / GTIN", ValueKind: KindBarcode, Required: false, ClaimOrder: 10, Builtin: true},
+	{Key: FieldSKU, Label: "SKU / product code", ValueKind: KindCode, Required: true, ClaimOrder: 20, Builtin: true},
+	{Key: FieldListPrice, Label: "List price / RRP", ValueKind: KindCurrency, Required: false, ClaimOrder: 30, Builtin: true},
+	{Key: FieldPrice, Label: "Price", ValueKind: KindCurrency, Required: true, ClaimOrder: 40, Builtin: true},
+	{Key: FieldUOM, Label: "Unit of measure", ValueKind: KindUOM, Required: false, ClaimOrder: 50, Builtin: true},
+	{Key: FieldDiscount, Label: "Discount", ValueKind: KindCurrency, Required: false, ClaimOrder: 60, Builtin: true},
+	{Key: FieldQtyBreak, Label: "Qty break", ValueKind: KindInteger, Required: false, ClaimOrder: 70, Builtin: true},
+	{Key: FieldCategory, Label: "Category", ValueKind: KindText, Required: false, ClaimOrder: 80, Builtin: true},
+	{Key: FieldBrand, Label: "Brand", ValueKind: KindText, Required: false, ClaimOrder: 90, Builtin: true},
+	{Key: FieldDescription, Label: "Description", ValueKind: KindFreetext, Required: true, ClaimOrder: 100, Builtin: true},
+}
+
+// defaultClaimOrder is what a newly-added field gets when it doesn't specify
+// one: last, so builtins always claim ambiguous columns first.
+const defaultClaimOrder = 100
+
+// builtinSynonyms maps canonical fields to normalized header-name fragments
+// seen in AU/NZ plumbing, electrical, and building supplier price books.
+// Matching is substring-based over the normalized (snake_case) header, so
+// "trade_price_ex_gst" hits both "trade" and "price".
+var builtinSynonyms = map[CanonicalField][]string{
 	FieldSKU: {
 		"sku", "product_code", "prod_code", "item_code", "item_no",
 		"item_number", "part_number", "part_no", "stock_code", "stockcode",
@@ -92,14 +183,6 @@ var synonyms = map[CanonicalField][]string{
 	},
 }
 
-// Order in which fields claim columns. More specific / higher-signal fields
-// go first so e.g. list_price wins "rrp" before the generic price patterns
-// see it.
-var claimOrder = []CanonicalField{
-	FieldBarcode, FieldSKU, FieldListPrice, FieldPrice, FieldUOM,
-	FieldDiscount, FieldQtyBreak, FieldCategory, FieldBrand, FieldDescription,
-}
-
 var (
 	skuValueRe     = regexp.MustCompile(`^[A-Z0-9][A-Z0-9\-\./]{2,24}$`)
 	barcodeValueRe = regexp.MustCompile(`^\d{8}$|^\d{12,14}$`)
@@ -113,29 +196,192 @@ var (
 	}
 )
 
+// Fields returns the registry's field definitions ordered by ClaimOrder (the
+// order in which they get first refusal on a column).
+func (r *FieldRegistry) Fields() []FieldDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.fieldsLocked()
+}
+
+// fieldsLocked is Fields' body, callable from methods that already hold r.mu
+// (RWMutex read-locks don't nest safely against a pending writer, so internal
+// callers must not go through the public, locking methods).
+func (r *FieldRegistry) fieldsLocked() []FieldDef {
+	out := append([]FieldDef(nil), r.fields...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ClaimOrder != out[j].ClaimOrder {
+			return out[i].ClaimOrder < out[j].ClaimOrder
+		}
+		return out[i].Key < out[j].Key // deterministic tiebreak
+	})
+	return out
+}
+
+// Get returns the definition for a field key, if known.
+func (r *FieldRegistry) Get(key CanonicalField) (FieldDef, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.getLocked(key)
+}
+
+func (r *FieldRegistry) getLocked(key CanonicalField) (FieldDef, bool) {
+	for _, f := range r.fields {
+		if f.Key == key {
+			return f, true
+		}
+	}
+	return FieldDef{}, false
+}
+
+// IsRequired reports whether a field must be mapped (and non-NULL after
+// cleaning) before a commit succeeds.
+func (r *FieldRegistry) IsRequired(key CanonicalField) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	f, ok := r.getLocked(key)
+	return ok && f.Required
+}
+
+// ValueKind returns the value classifier kind for a field, defaulting to
+// KindText (VARCHAR passthrough, no value signal) for an unknown field so
+// callers never have to special-case a lookup miss.
+func (r *FieldRegistry) ValueKind(key CanonicalField) ValueKind {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if f, ok := r.getLocked(key); ok {
+		return f.ValueKind
+	}
+	return KindText
+}
+
+// RequiredFields returns every field currently marked required.
+func (r *FieldRegistry) RequiredFields() []CanonicalField {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []CanonicalField
+	for _, f := range r.fieldsLocked() {
+		if f.Required {
+			out = append(out, f.Key)
+		}
+	}
+	return out
+}
+
+// Synonyms returns the taught header-name fragments for a field.
+func (r *FieldRegistry) Synonyms(key CanonicalField) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]string(nil), r.synonyms[key]...)
+}
+
+// AddField defines a new canonical field at runtime. Returns an error if the
+// key already exists or the value kind is unrecognized. A field type that's
+// "value_kind=text" is a generic passthrough — it types as VARCHAR and never
+// fails a cast, which is what "no sensible option exists" needed: mapping a
+// column to a text field keeps it, unmapped drops it, nothing forces a choice
+// that doesn't fit.
+func (r *FieldRegistry) AddField(def FieldDef) error {
+	if def.Key == FieldUnknown {
+		return fmt.Errorf("field key cannot be empty")
+	}
+	if !validValueKind(def.ValueKind) {
+		return fmt.Errorf("unknown value_kind %q", def.ValueKind)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.getLocked(def.Key); exists {
+		return fmt.Errorf("field %q already exists", def.Key)
+	}
+	if def.ClaimOrder == 0 {
+		def.ClaimOrder = defaultClaimOrder
+	}
+	r.fields = append(r.fields, def)
+	return nil
+}
+
+// AddSynonym teaches a new header-name fragment for an existing field.
+// Idempotent: teaching the same synonym twice is not an error.
+func (r *FieldRegistry) AddSynonym(key CanonicalField, synonym string) error {
+	synonym = strings.ToLower(strings.TrimSpace(synonym))
+	if synonym == "" {
+		return fmt.Errorf("synonym cannot be empty")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.getLocked(key); !exists {
+		return fmt.Errorf("unknown field %q", key)
+	}
+	for _, s := range r.synonyms[key] {
+		if s == synonym {
+			return nil
+		}
+	}
+	r.synonyms[key] = append(r.synonyms[key], synonym)
+	return nil
+}
+
+// BestValueMatch scores a column's sampled values against every field's value
+// classifier (skipping KindText fields, which have no value signal) and
+// returns the best-scoring field. Used by the corpus scanner to suggest a
+// missing synonym: a column unmapped by name whose values still clearly match
+// a known field's shape.
+func (r *FieldRegistry) BestValueMatch(values []string) (CanonicalField, float64) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var best CanonicalField
+	bestScore := 0.0
+	for _, f := range r.fieldsLocked() {
+		if f.ValueKind == KindText {
+			continue
+		}
+		vs := valueScoreForKind(f.ValueKind, values)
+		if vs > bestScore {
+			bestScore = vs
+			best = f.Key
+		}
+	}
+	return best, bestScore
+}
+
 // ProposeMapping scores every (column, field) pair using header-name evidence
-// and value-distribution evidence, then assigns greedily in claimOrder.
+// and value-distribution evidence, then assigns greedily in claim order,
+// against the compiled-in default field set. It exists so call sites that
+// don't need a DB-backed registry (unit tests, one-off tooling) keep working
+// unchanged; anything wired to persisted field types should call
+// DefaultRegistry().Propose or a loaded registry's Propose directly.
+func ProposeMapping(columns []string, samples [][]string) *MappingProposal {
+	return DefaultRegistry().Propose(columns, samples)
+}
+
+// Propose is the registry-aware form of ProposeMapping: every candidate field
+// (builtin or user-added) and every taught synonym participates in scoring.
 //
 // Name and value evidence are combined 50/50 when both exist. Value evidence
 // alone can carry a mapping (mislabeled or blank headers are common); name
 // evidence alone is capped at medium confidence because supplier headers lie.
-func ProposeMapping(columns []string, samples [][]string) *MappingProposal {
+func (r *FieldRegistry) Propose(columns []string, samples [][]string) *MappingProposal {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	p := &MappingProposal{Fingerprint: Fingerprint(columns)}
 
 	colValues := transpose(columns, samples)
+	fields := r.fieldsLocked()
 
 	type cand struct {
-		col        int
-		name, val  float64
+		col       int
+		name, val float64
 	}
 	// score matrix
 	scores := map[CanonicalField][]cand{}
-	for f, syns := range synonyms {
+	for _, f := range fields {
+		syns := r.synonyms[f.Key]
 		for i, col := range columns {
 			ns := nameScore(col, syns)
-			vs := valueScore(f, colValues[i])
+			vs := valueScoreForKind(f.ValueKind, colValues[i])
 			if ns > 0 || vs > 0 {
-				scores[f] = append(scores[f], cand{i, ns, vs})
+				scores[f.Key] = append(scores[f.Key], cand{i, ns, vs})
 			}
 		}
 	}
@@ -143,8 +389,8 @@ func ProposeMapping(columns []string, samples [][]string) *MappingProposal {
 	claimed := map[int]bool{}
 	byField := map[CanonicalField]*FieldMapping{}
 
-	for _, f := range claimOrder {
-		cands := scores[f]
+	for _, f := range fields {
+		cands := scores[f.Key]
 		sort.Slice(cands, func(a, b int) bool {
 			return combined(cands[a].name, cands[a].val) >
 				combined(cands[b].name, cands[b].val)
@@ -161,7 +407,7 @@ func ProposeMapping(columns []string, samples [][]string) *MappingProposal {
 			fm := &FieldMapping{
 				SourceColumn: columns[c.col],
 				SourceIndex:  c.col,
-				Field:        f,
+				Field:        f.Key,
 				Confidence:   conf,
 				NameScore:    c.name,
 				ValueScore:   c.val,
@@ -172,7 +418,7 @@ func ProposeMapping(columns []string, samples [][]string) *MappingProposal {
 			if c.name == 0 && c.val > 0 {
 				fm.Notes = "matched on values only; header name unrecognized"
 			}
-			byField[f] = fm
+			byField[f.Key] = fm
 			break
 		}
 	}
@@ -184,8 +430,8 @@ func ProposeMapping(columns []string, samples [][]string) *MappingProposal {
 			})
 		}
 	}
-	for _, f := range claimOrder {
-		if m, ok := byField[f]; ok {
+	for _, f := range fields {
+		if m, ok := byField[f.Key]; ok {
 			p.Mappings = append(p.Mappings, *m)
 		}
 	}
@@ -193,9 +439,12 @@ func ProposeMapping(columns []string, samples [][]string) *MappingProposal {
 		return p.Mappings[a].SourceIndex < p.Mappings[b].SourceIndex
 	})
 
-	for _, rf := range requiredFields {
-		if _, ok := byField[rf]; !ok {
-			p.Missing = append(p.Missing, rf)
+	for _, f := range fields {
+		if !f.Required {
+			continue
+		}
+		if _, ok := byField[f.Key]; !ok {
+			p.Missing = append(p.Missing, f.Key)
 		}
 	}
 	if len(p.Missing) > 0 {
@@ -244,8 +493,15 @@ func nameScore(col string, syns []string) float64 {
 	return best
 }
 
-// valueScore checks a sample of column values against field-specific patterns.
-func valueScore(f CanonicalField, values []string) float64 {
+// valueScoreForKind checks a sample of column values against the pattern for
+// a value_kind. This is what used to be a switch over CanonicalField
+// (valueScore); indexing by kind instead means a new field just declares
+// which kind it is and inherits an existing classifier rather than needing
+// its own bespoke case.
+func valueScoreForKind(kind ValueKind, values []string) float64 {
+	if kind == KindText {
+		return 0 // no reliable generic value signal; name-only fields
+	}
 	vals := sampleNonEmpty(values, 100)
 	if len(vals) < 3 {
 		return 0
@@ -255,33 +511,37 @@ func valueScore(f CanonicalField, values []string) float64 {
 	for _, v := range vals {
 		v = strings.TrimSpace(v)
 		uniq[v] = true
-		switch f {
-		case FieldSKU:
+		switch kind {
+		case KindCode:
 			if skuValueRe.MatchString(strings.ToUpper(v)) {
 				hit++
 			}
-		case FieldBarcode:
+		case KindBarcode:
 			if barcodeValueRe.MatchString(v) {
 				hit++
 			}
-		case FieldPrice, FieldListPrice, FieldDiscount:
+		case KindCurrency:
 			if currencyRe.MatchString(v) {
 				hit++
 			}
-		case FieldUOM:
+		case KindUOM:
 			if uomVocab[strings.ToLower(v)] {
 				hit++
 			}
-		case FieldQtyBreak:
+		case KindInteger:
 			if numericRe.MatchString(v) {
 				hit++
 			}
-		case FieldDescription:
+		case KindDate:
+			if dateRe.MatchString(v) {
+				hit++
+			}
+		case KindFreetext:
 			if len(v) >= 8 && strings.Contains(v, " ") {
 				hit++
 			}
 		default:
-			return 0 // category/brand: no reliable value signal
+			return 0 // unrecognized kind: no classifier, no signal
 		}
 	}
 	ratio := float64(hit) / float64(len(vals))
@@ -289,9 +549,9 @@ func valueScore(f CanonicalField, values []string) float64 {
 		return 0 // weak pattern agreement is worse than no signal
 	}
 
-	// SKU/barcode should also be near-unique; a repeating "code" column is
-	// probably a category code.
-	if f == FieldSKU || f == FieldBarcode {
+	// Code/barcode values should also be near-unique; a repeating "code"
+	// column is probably a category code.
+	if kind == KindCode || kind == KindBarcode {
 		uniqueness := float64(len(uniq)) / float64(len(vals))
 		if uniqueness < 0.9 {
 			ratio *= uniqueness

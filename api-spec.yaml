@@ -225,6 +225,91 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /field-types:
+    get:
+      operationId: listFieldTypes
+      summary: List canonical field types available for column mapping
+      description: |
+        Returns every canonical field the mapping proposer and the manual
+        mapping UI can offer — builtin (barcode, sku, price, ...) and any
+        added at runtime via POST /field-types. This is what the mapping
+        dropdown should fetch instead of hardcoding a field list, so a field
+        added here is immediately selectable everywhere.
+      responses:
+        "200":
+          description: Known field types
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FieldTypesResponse"
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createFieldType
+      summary: Define a new canonical field type
+      description: |
+        Adds a field the mapping proposer and UI can use immediately. This is
+        the fix for "no option makes sense" in the manual mapping UI: define
+        the field here (key, label, and a value_kind so it gets real
+        cleaning/typing at commit, not just a VARCHAR passthrough), and it
+        shows up in the next /field-types list and every subsequent /load's
+        proposal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFieldTypeRequest"
+      responses:
+        "200":
+          description: Field type created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FieldTypeResponse"
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /field-types/{key}/synonyms:
+    post:
+      operationId: addFieldSynonym
+      summary: Teach a header-name synonym for an existing field type
+      description: |
+        Adds a normalized header-name fragment that should count as evidence
+        for this field in future mapping proposals. Used to accept a corpus
+        scan's "missing synonym" suggestion, or just to teach a one-off
+        supplier abbreviation. Matching stays substring-based over the
+        normalized header, same as builtin synonyms.
+      parameters:
+        - in: path
+          name: key
+          required: true
+          schema:
+            type: string
+          description: Canonical field key (e.g. price, or a custom field's key)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddSynonymRequest"
+      responses:
+        "200":
+          description: Synonym added (or already present)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FieldTypeResponse"
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/{id}:
     get:
       operationId: fetchCSV
@@ -491,6 +576,77 @@ components:
           items:
             $ref: "#/components/schemas/QuarantineRow"
       required: [ok, columns, total, rows]
+    FieldTypeDef:
+      type: object
+      properties:
+        key:
+          type: string
+          example: pack_qty
+        label:
+          type: string
+          example: Pack quantity
+        value_kind:
+          type: string
+          enum: [text, currency, integer, barcode, uom, date, code, freetext]
+          description: |
+            Which value classifier the field uses for value-based mapping
+            evidence and for cleaning/typing at commit. text = generic VARCHAR
+            passthrough with no value signal (the "no sensible option" catch-all:
+            mapping a column here keeps it as-is; leaving it unmapped drops it).
+        required:
+          type: boolean
+          description: Must be mapped (and non-null after cleaning) before commit
+        claim_order:
+          type: integer
+          description: Lower claims a contested column first; new fields default to 100
+        builtin:
+          type: boolean
+          description: True for the compiled-in field set, false for anything added via this API
+      required: [key, label, value_kind, required, claim_order, builtin]
+    FieldTypesResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldTypeDef"
+      required: [ok, fields]
+    FieldTypeResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        field:
+          $ref: "#/components/schemas/FieldTypeDef"
+      required: [ok, field]
+    CreateFieldTypeRequest:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Stable identifier; snake_case recommended, must be unique
+          example: pack_qty
+        label:
+          type: string
+          example: Pack quantity
+        value_kind:
+          type: string
+          enum: [text, currency, integer, barcode, uom, date, code, freetext]
+          default: text
+        required:
+          type: boolean
+          default: false
+      required: [key, label]
+    AddSynonymRequest:
+      type: object
+      properties:
+        synonym:
+          type: string
+          description: Normalized header-name fragment, e.g. nett_ea
+          example: nett_ea
+      required: [synonym]
     ImportResponse:
       type: object
       properties:

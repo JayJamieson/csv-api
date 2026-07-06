@@ -34,17 +34,17 @@ const (
 // StructureReport is the output of DetectStructure: everything the loader
 // needs to build a correct read_csv call plus the evidence behind it.
 type StructureReport struct {
-	Delimiter      rune         `json:"delimiter"`
-	HeaderIndex    int          `json:"header_index"` // 0-based row index; -1 if none found
-	Confidence     Confidence   `json:"confidence"`
-	Columns        []string     `json:"columns"`      // normalized header names
-	RawColumns     []string     `json:"raw_columns"`  // as they appear in the file
-	ModalFields    int          `json:"modal_fields"` // dominant field count
-	SampledRows    int          `json:"sampled_rows"`
-	RowKinds       []RowKind    `json:"row_kinds"` // classification per sampled row
-	Candidates     []Candidate  `json:"candidates,omitempty"`
-	SectionSamples []string     `json:"section_samples,omitempty"`
-	Warnings       []string     `json:"warnings,omitempty"`
+	Delimiter      rune        `json:"delimiter"`
+	HeaderIndex    int         `json:"header_index"` // 0-based row index; -1 if none found
+	Confidence     Confidence  `json:"confidence"`
+	Columns        []string    `json:"columns"`      // normalized header names
+	RawColumns     []string    `json:"raw_columns"`  // as they appear in the file
+	ModalFields    int         `json:"modal_fields"` // dominant field count
+	SampledRows    int         `json:"sampled_rows"`
+	RowKinds       []RowKind   `json:"row_kinds"` // classification per sampled row
+	Candidates     []Candidate `json:"candidates,omitempty"`
+	SectionSamples []string    `json:"section_samples,omitempty"`
+	Warnings       []string    `json:"warnings,omitempty"`
 }
 
 // Candidate is a scored potential header row, surfaced for manual selection.
@@ -91,6 +91,20 @@ var (
 // score, and every row is separately classified against the winning header.
 // This keeps one weird supplier layout from needing its own special case.
 func DetectStructure(r io.Reader, opts *DetectOptions) (*StructureReport, error) {
+	o := resolveDetectOptions(opts)
+
+	delim, rows, err := sampleRows(r, o.SampleRows)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, errors.New("file contains no rows")
+	}
+
+	return detectStructureFromRows(delim, rows, o), nil
+}
+
+func resolveDetectOptions(opts *DetectOptions) DetectOptions {
 	o := defaultDetectOptions()
 	if opts != nil {
 		if opts.SampleRows > 0 {
@@ -103,15 +117,14 @@ func DetectStructure(r io.Reader, opts *DetectOptions) (*StructureReport, error)
 			o.RivalMargin = opts.RivalMargin
 		}
 	}
+	return o
+}
 
-	delim, rows, err := sampleRows(r, o.SampleRows)
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, errors.New("file contains no rows")
-	}
-
+// detectStructureFromRows is the scoring/classification core of DetectStructure,
+// factored out so callers that already have sampled rows in hand (the corpus
+// scanner, which needs the raw rows for mapping proposal too) don't have to
+// re-read and re-sample the file to get a report.
+func detectStructureFromRows(delim rune, rows [][]string, o DetectOptions) *StructureReport {
 	report := &StructureReport{
 		Delimiter:   delim,
 		HeaderIndex: -1,
@@ -163,7 +176,7 @@ func DetectStructure(r io.Reader, opts *DetectOptions) (*StructureReport, error)
 		}
 	}
 
-	return report, nil
+	return report
 }
 
 // DetectStructureWithHeader builds a StructureReport around a caller-chosen
