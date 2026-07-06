@@ -2,6 +2,8 @@ package db
 
 import (
 	"time"
+
+	duckdb "github.com/marcboeker/go-duckdb/v2"
 )
 
 type transformFunc func(columns []string, values []any) any
@@ -38,15 +40,28 @@ type QueryCSV struct {
 	Format     string
 }
 
+// coerceValue normalizes a raw driver value into something that JSON-encodes
+// sensibly. []byte becomes a string; a DuckDB DECIMAL (duckdb.Decimal) becomes
+// a float64 so a typed price column serializes as a number (e.g. 1145.0) rather
+// than the driver's {Width,Scale,Value} struct.
+func coerceValue(val any) any {
+	switch v := val.(type) {
+	case []byte:
+		return string(v)
+	case duckdb.Decimal:
+		return v.Float64()
+	case *duckdb.Decimal:
+		return v.Float64()
+	default:
+		return val
+	}
+}
+
 func transformArray(columns []string, values []any) any {
 	arrRow := make([]any, len(columns))
 
-	for i, _ := range columns {
-		val := values[i]
-		if b, ok := val.([]byte); ok {
-			val = string(b)
-		}
-		arrRow[i] = val
+	for i := range columns {
+		arrRow[i] = coerceValue(values[i])
 	}
 	return arrRow
 }
@@ -55,11 +70,7 @@ func transformObject(columns []string, values []any) any {
 	objRow := make(map[string]any)
 
 	for i, col := range columns {
-		val := values[i]
-		if b, ok := val.([]byte); ok {
-			val = string(b)
-		}
-		objRow[col] = val
+		objRow[col] = coerceValue(values[i])
 	}
 	return objRow
 }

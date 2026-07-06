@@ -44,6 +44,187 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /load:
+    post:
+      operationId: loadCSV
+      summary: Stage a CSV for import with structure detection and mapping proposal
+      description: |
+        Phase 1 of a two-phase import. Normalizes encoding, detects the header
+        row and structural noise, stages the file as all-VARCHAR, and returns a
+        proposed column mapping with per-field confidence plus a preview.
+        Nothing is committed until phase 2 (`/imports/{id}/commit`), unless
+        `mode=auto` and detection confidence is high and a saved mapping exists.
+      parameters:
+        - in: query
+          name: url
+          schema:
+            type: string
+            format: uri
+          description: HTTP URL of the CSV file to import
+        - in: query
+          name: name
+          schema:
+            type: string
+          description: Name of the CSV file when uploading directly
+        - in: query
+          name: supplier
+          schema:
+            type: string
+          description: Optional supplier label stored with any confirmed mapping
+        - in: query
+          name: mode
+          schema:
+            type: string
+            enum: [manual, auto]
+            default: manual
+          description: |
+            manual: always stop after staging and wait for commit.
+            auto: commit without confirmation when header confidence is high
+            and a saved mapping matches the fingerprint; otherwise falls back
+            to manual and the response says why.
+      requestBody:
+        description: The CSV file content when uploading via `name` query parameter
+        content:
+          text/csv:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: File staged (or auto-committed) with detection report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadResponse"
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /imports/{id}/commit:
+    post:
+      operationId: commitImport
+      summary: Confirm mapping and promote a staged import to a typed table
+      description: |
+        Phase 2 of a two-phase import. Applies the (possibly edited) mapping,
+        filters structural noise, cleans and types values, quarantines rows
+        failing required-field validation, and saves the confirmed mapping
+        against the header fingerprint for future automatic imports.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Import ID returned by /load
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommitRequest"
+      responses:
+        "200":
+          description: Import committed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommitResponse"
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /imports/{id}/quarantine:
+    get:
+      operationId: getQuarantine
+      summary: List rows rejected during a committed import
+      description: |
+        Returns rows set aside during commit because a required field was
+        empty or failed to cast, with their original (uncleaned) cell values
+        and a reason. Available until the quarantine table is dropped.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            default: 100
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+          description: |
+            json returns QuarantineResponse. csv streams a downloadable CSV of
+            the rejected rows (original cells plus a reason column) for fixing
+            and re-importing.
+      responses:
+        "200":
+          description: Quarantined rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuarantineResponse"
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /imports/{id}/redetect:
+    post:
+      operationId: redetectImport
+      summary: Re-detect structure around a chosen header row and re-stage
+      description: |
+        Re-runs detection on the already-staged spool file using a
+        caller-supplied header row, re-stages all-VARCHAR, and returns a fresh
+        LoadResponse (proposed mapping, preview, confidence) so a client can
+        review the new mapping before committing. Used when the auto-detected
+        header was wrong or low-confidence.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Import ID returned by /load
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedetectRequest"
+      responses:
+        "200":
+          description: Re-staged with a fresh detection report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadResponse"
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/{id}:
     get:
       operationId: fetchCSV
@@ -102,6 +283,214 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
+    FieldMapping:
+      type: object
+      properties:
+        source_column:
+          type: string
+          example: trade_price
+        source_index:
+          type: integer
+          example: 2
+        field:
+          type: string
+          description: Canonical field name; empty string means unmapped
+          example: price
+        confidence:
+          type: number
+          format: double
+          example: 0.87
+        notes:
+          type: string
+      required: [source_column, source_index, field, confidence]
+    HeaderCandidate:
+      type: object
+      properties:
+        index:
+          type: integer
+        score:
+          type: number
+          format: double
+        cells:
+          type: array
+          items:
+            type: string
+      required: [index, score, cells]
+    LoadResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        import_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [staged, committed]
+          description: committed only when mode=auto succeeded end to end
+        auto_commit_blocked_reason:
+          type: string
+          description: Present when mode=auto fell back to manual
+        source_encoding:
+          type: string
+          example: windows-1252
+        delimiter:
+          type: string
+          example: ","
+        header_index:
+          type: integer
+          description: Detected header row (0-based); -1 when none found
+        header_confidence:
+          type: string
+          enum: [high, medium, low]
+        header_candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/HeaderCandidate"
+        columns:
+          type: array
+          items:
+            type: string
+        fingerprint:
+          type: string
+        known_fingerprint:
+          type: boolean
+          description: True when a saved mapping matched this header set
+        proposed_mappings:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldMapping"
+        missing_fields:
+          type: array
+          items:
+            type: string
+        rows_staged:
+          type: integer
+          format: int64
+        preview:
+          type: array
+          description: First rows of staged data for eyeballing
+          items:
+            type: array
+            items:
+              type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        endpoint:
+          type: string
+          format: uri
+          description: Query endpoint; present only when state is committed
+      required:
+        - ok
+        - import_id
+        - state
+        - header_index
+        - header_confidence
+        - columns
+        - fingerprint
+        - known_fingerprint
+        - rows_staged
+    CommitRequest:
+      type: object
+      properties:
+        mappings:
+          type: array
+          description: Final mapping; omit to accept the proposal as returned
+          items:
+            $ref: "#/components/schemas/FieldMapping"
+        header_index:
+          type: integer
+          description: Override the detected header row (0-based)
+          # Keep as *int: 0 is a valid header row, so a value type could not
+          # distinguish "override to row 0" from "not provided".
+          x-go-type-skip-optional-pointer: false
+        save_mapping:
+          type: boolean
+          default: true
+          description: Persist this mapping against the fingerprint
+          # Keep as *bool: the documented default is true, which a value bool
+          # (zero value false) could not represent when the field is omitted.
+          x-go-type-skip-optional-pointer: false
+      required: []
+    RedetectRequest:
+      type: object
+      properties:
+        header_index:
+          type: integer
+          description: 0-based row to treat as the header and re-detect around
+      required: [header_index]
+    CommitResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        endpoint:
+          type: string
+          format: uri
+        rows_raw:
+          type: integer
+          format: int64
+        rows_typed:
+          type: integer
+          format: int64
+        rows_quarantined:
+          type: integer
+          format: int64
+        rows_filtered_blank:
+          type: integer
+          format: int64
+        rows_filtered_sections:
+          type: integer
+          format: int64
+        rows_filtered_repeated_headers:
+          type: integer
+          format: int64
+        null_rates:
+          type: object
+          additionalProperties:
+            type: number
+            format: double
+        warnings:
+          type: array
+          items:
+            type: string
+      required: [ok, endpoint, rows_raw, rows_typed, rows_quarantined]
+    QuarantineRow:
+      type: object
+      properties:
+        row:
+          type: integer
+          format: int64
+          description: Original row number in the source file
+        cells:
+          type: array
+          items:
+            type: string
+          description: Original uncleaned cell values, aligned to columns
+        reason:
+          type: string
+          example: "price missing/uncastable; "
+      required: [row, cells, reason]
+    QuarantineResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        columns:
+          type: array
+          items:
+            type: string
+          description: Source column names the cells align to
+        total:
+          type: integer
+          format: int64
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuarantineRow"
+      required: [ok, columns, total, rows]
     ImportResponse:
       type: object
       properties:

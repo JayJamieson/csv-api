@@ -20,6 +20,19 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for LoadResponseHeaderConfidence.
+const (
+	High   LoadResponseHeaderConfidence = "high"
+	Low    LoadResponseHeaderConfidence = "low"
+	Medium LoadResponseHeaderConfidence = "medium"
+)
+
+// Defines values for LoadResponseState.
+const (
+	Committed LoadResponseState = "committed"
+	Staged    LoadResponseState = "staged"
+)
+
 // Defines values for FetchCSVParamsSortOrder.
 const (
 	ASC  FetchCSVParamsSortOrder = "ASC"
@@ -32,6 +45,18 @@ const (
 	Objects FetchCSVParamsFormat = "objects"
 )
 
+// Defines values for GetQuarantineParamsFormat.
+const (
+	Csv  GetQuarantineParamsFormat = "csv"
+	Json GetQuarantineParamsFormat = "json"
+)
+
+// Defines values for LoadCSVParamsMode.
+const (
+	Auto   LoadCSVParamsMode = "auto"
+	Manual LoadCSVParamsMode = "manual"
+)
+
 // CSVResponse defines model for CSVResponse.
 type CSVResponse struct {
 	Columns []string      `json:"columns,omitempty"`
@@ -41,6 +66,32 @@ type CSVResponse struct {
 	Total   int           `json:"total,omitempty"`
 }
 
+// CommitRequest defines model for CommitRequest.
+type CommitRequest struct {
+	// HeaderIndex Override the detected header row (0-based)
+	HeaderIndex *int `json:"header_index,omitempty"`
+
+	// Mappings Final mapping; omit to accept the proposal as returned
+	Mappings []FieldMapping `json:"mappings,omitempty"`
+
+	// SaveMapping Persist this mapping against the fingerprint
+	SaveMapping *bool `json:"save_mapping,omitempty"`
+}
+
+// CommitResponse defines model for CommitResponse.
+type CommitResponse struct {
+	Endpoint                    string             `json:"endpoint"`
+	NullRates                   map[string]float64 `json:"null_rates,omitempty"`
+	Ok                          bool               `json:"ok"`
+	RowsFilteredBlank           int64              `json:"rows_filtered_blank,omitempty"`
+	RowsFilteredRepeatedHeaders int64              `json:"rows_filtered_repeated_headers,omitempty"`
+	RowsFilteredSections        int64              `json:"rows_filtered_sections,omitempty"`
+	RowsQuarantined             int64              `json:"rows_quarantined"`
+	RowsRaw                     int64              `json:"rows_raw"`
+	RowsTyped                   int64              `json:"rows_typed"`
+	Warnings                    []string           `json:"warnings,omitempty"`
+}
+
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Error     string    `json:"error"`
@@ -48,10 +99,92 @@ type ErrorResponse struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// FieldMapping defines model for FieldMapping.
+type FieldMapping struct {
+	Confidence float64 `json:"confidence"`
+
+	// Field Canonical field name; empty string means unmapped
+	Field        string `json:"field"`
+	Notes        string `json:"notes,omitempty"`
+	SourceColumn string `json:"source_column"`
+	SourceIndex  int    `json:"source_index"`
+}
+
+// HeaderCandidate defines model for HeaderCandidate.
+type HeaderCandidate struct {
+	Cells []string `json:"cells"`
+	Index int      `json:"index"`
+	Score float64  `json:"score"`
+}
+
 // ImportResponse defines model for ImportResponse.
 type ImportResponse struct {
 	Endpoint string `json:"endpoint"`
 	Ok       bool   `json:"ok"`
+}
+
+// LoadResponse defines model for LoadResponse.
+type LoadResponse struct {
+	// AutoCommitBlockedReason Present when mode=auto fell back to manual
+	AutoCommitBlockedReason string   `json:"auto_commit_blocked_reason,omitempty"`
+	Columns                 []string `json:"columns"`
+	Delimiter               string   `json:"delimiter,omitempty"`
+
+	// Endpoint Query endpoint; present only when state is committed
+	Endpoint         string                       `json:"endpoint,omitempty"`
+	Fingerprint      string                       `json:"fingerprint"`
+	HeaderCandidates []HeaderCandidate            `json:"header_candidates,omitempty"`
+	HeaderConfidence LoadResponseHeaderConfidence `json:"header_confidence"`
+
+	// HeaderIndex Detected header row (0-based); -1 when none found
+	HeaderIndex int                `json:"header_index"`
+	ImportId    openapi_types.UUID `json:"import_id"`
+
+	// KnownFingerprint True when a saved mapping matched this header set
+	KnownFingerprint bool     `json:"known_fingerprint"`
+	MissingFields    []string `json:"missing_fields,omitempty"`
+	Ok               bool     `json:"ok"`
+
+	// Preview First rows of staged data for eyeballing
+	Preview          [][]string     `json:"preview,omitempty"`
+	ProposedMappings []FieldMapping `json:"proposed_mappings,omitempty"`
+	RowsStaged       int64          `json:"rows_staged"`
+	SourceEncoding   string         `json:"source_encoding,omitempty"`
+
+	// State committed only when mode=auto succeeded end to end
+	State    LoadResponseState `json:"state"`
+	Warnings []string          `json:"warnings,omitempty"`
+}
+
+// LoadResponseHeaderConfidence defines model for LoadResponse.HeaderConfidence.
+type LoadResponseHeaderConfidence string
+
+// LoadResponseState committed only when mode=auto succeeded end to end
+type LoadResponseState string
+
+// QuarantineResponse defines model for QuarantineResponse.
+type QuarantineResponse struct {
+	// Columns Source column names the cells align to
+	Columns []string        `json:"columns"`
+	Ok      bool            `json:"ok"`
+	Rows    []QuarantineRow `json:"rows"`
+	Total   int64           `json:"total"`
+}
+
+// QuarantineRow defines model for QuarantineRow.
+type QuarantineRow struct {
+	// Cells Original uncleaned cell values, aligned to columns
+	Cells  []string `json:"cells"`
+	Reason string   `json:"reason"`
+
+	// Row Original row number in the source file
+	Row int64 `json:"row"`
+}
+
+// RedetectRequest defines model for RedetectRequest.
+type RedetectRequest struct {
+	// HeaderIndex 0-based row to treat as the header and re-detect around
+	HeaderIndex int `json:"header_index"`
 }
 
 // FetchCSVParams defines parameters for FetchCSV.
@@ -87,6 +220,47 @@ type ImportCSVParams struct {
 	Name string `form:"name,omitempty" json:"name,omitempty"`
 }
 
+// GetQuarantineParams defines parameters for GetQuarantine.
+type GetQuarantineParams struct {
+	Limit  int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset int `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Format json returns QuarantineResponse. csv streams a downloadable CSV of
+	// the rejected rows (original cells plus a reason column) for fixing
+	// and re-importing.
+	Format GetQuarantineParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetQuarantineParamsFormat defines parameters for GetQuarantine.
+type GetQuarantineParamsFormat string
+
+// LoadCSVParams defines parameters for LoadCSV.
+type LoadCSVParams struct {
+	// Url HTTP URL of the CSV file to import
+	Url string `form:"url,omitempty" json:"url,omitempty"`
+
+	// Name Name of the CSV file when uploading directly
+	Name string `form:"name,omitempty" json:"name,omitempty"`
+
+	// Supplier Optional supplier label stored with any confirmed mapping
+	Supplier string `form:"supplier,omitempty" json:"supplier,omitempty"`
+
+	// Mode manual: always stop after staging and wait for commit.
+	// auto: commit without confirmation when header confidence is high
+	// and a saved mapping matches the fingerprint; otherwise falls back
+	// to manual and the response says why.
+	Mode LoadCSVParamsMode `form:"mode,omitempty" json:"mode,omitempty"`
+}
+
+// LoadCSVParamsMode defines parameters for LoadCSV.
+type LoadCSVParamsMode string
+
+// CommitImportJSONRequestBody defines body for CommitImport for application/json ContentType.
+type CommitImportJSONRequestBody = CommitRequest
+
+// RedetectImportJSONRequestBody defines body for RedetectImport for application/json ContentType.
+type RedetectImportJSONRequestBody = RedetectRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Query loaded CSV data
@@ -95,6 +269,18 @@ type ServerInterface interface {
 	// Import a CSV file from a URL or upload
 	// (POST /import)
 	ImportCSV(ctx echo.Context, params ImportCSVParams) error
+	// Confirm mapping and promote a staged import to a typed table
+	// (POST /imports/{id}/commit)
+	CommitImport(ctx echo.Context, id openapi_types.UUID) error
+	// List rows rejected during a committed import
+	// (GET /imports/{id}/quarantine)
+	GetQuarantine(ctx echo.Context, id openapi_types.UUID, params GetQuarantineParams) error
+	// Re-detect structure around a chosen header row and re-stage
+	// (POST /imports/{id}/redetect)
+	RedetectImport(ctx echo.Context, id openapi_types.UUID) error
+	// Stage a CSV for import with structure detection and mapping proposal
+	// (POST /load)
+	LoadCSV(ctx echo.Context, params LoadCSVParams) error
 }
 
 // ServerInterfaceWrapper converts echo contexts to parameters.
@@ -180,6 +366,116 @@ func (w *ServerInterfaceWrapper) ImportCSV(ctx echo.Context) error {
 	return err
 }
 
+// CommitImport converts echo context to params.
+func (w *ServerInterfaceWrapper) CommitImport(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CommitImport(ctx, id)
+	return err
+}
+
+// GetQuarantine converts echo context to params.
+func (w *ServerInterfaceWrapper) GetQuarantine(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetQuarantineParams
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", ctx.QueryParams(), &params.Limit)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter limit: %s", err))
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", ctx.QueryParams(), &params.Offset)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter offset: %s", err))
+	}
+
+	// ------------- Optional query parameter "format" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "format", ctx.QueryParams(), &params.Format)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter format: %s", err))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.GetQuarantine(ctx, id, params)
+	return err
+}
+
+// RedetectImport converts echo context to params.
+func (w *ServerInterfaceWrapper) RedetectImport(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.RedetectImport(ctx, id)
+	return err
+}
+
+// LoadCSV converts echo context to params.
+func (w *ServerInterfaceWrapper) LoadCSV(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LoadCSVParams
+	// ------------- Optional query parameter "url" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "url", ctx.QueryParams(), &params.Url)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter url: %s", err))
+	}
+
+	// ------------- Optional query parameter "name" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "name", ctx.QueryParams(), &params.Name)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter name: %s", err))
+	}
+
+	// ------------- Optional query parameter "supplier" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "supplier", ctx.QueryParams(), &params.Supplier)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter supplier: %s", err))
+	}
+
+	// ------------- Optional query parameter "mode" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "mode", ctx.QueryParams(), &params.Mode)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter mode: %s", err))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.LoadCSV(ctx, params)
+	return err
+}
+
 // This is a simple interface which specifies echo.Route addition functions which
 // are present on both echo.Echo and echo.Group, since we want to allow using
 // either of them for path registration
@@ -210,31 +506,68 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 
 	router.GET(baseURL+"/api/:id", wrapper.FetchCSV)
 	router.POST(baseURL+"/import", wrapper.ImportCSV)
+	router.POST(baseURL+"/imports/:id/commit", wrapper.CommitImport)
+	router.GET(baseURL+"/imports/:id/quarantine", wrapper.GetQuarantine)
+	router.POST(baseURL+"/imports/:id/redetect", wrapper.RedetectImport)
+	router.POST(baseURL+"/load", wrapper.LoadCSV)
 
 }
 
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/8RWwXLbNhD9FQzaoyxRsqMkvKVKOnUnjV3L9sXR1BC5lJAQALMA5Wg8+vfOLimJoqjU",
-	"h3Z6kkgAu+8t3r7ls0ycKZwFG7yMn6VPlmAU/51M72/AF856oMcCXQEYNPBi4vLSWP4L35UpcpDxg0T3",
-	"pFPZk39o77Wzsiev0S1QGQOyJyfOemeMCtpZkYKYXMtZT+oAhuOEdQEylj6gtgu56W1fKES1pmf39SBd",
-	"wBJ2m+bO5aAsbftWAq7/MofYRv3xm2E0HL8djXoyc2hUkLFMXTnPCVodxZZmDkhB0D01Qe0wBBdUfhD5",
-	"fHda2wALOr7H7uZfIAl08AOiw9P1BFrurIIB79UCuiukDfigTEGre1YqwBkt7YltjxAz+FZqhJTua3++",
-	"VyPY55t1kLg0hcPwAxY2LZy24aBAchlCEQ8GuUtUvnQ+xG+iaDhQhR4MR+dw8Wr8+gzevJ2fDUfp+Zm6",
-	"eDU+uxiNx8OL4euLKIpk475K1MecXiiMFnX3lThv8R6Tpf3aZo4ip+AT1AXpVsby3fWlyByK3KlU24VQ",
-	"NhWsOXqYTO9FqoISmc7BE1gduAi0cPNheiveXV/KnlwB+ircsB/1I2ZRgFWFlrE870f9c9mThQpLrisX",
-	"61mnG3pYQDgGdQMBNaxAkHBFhs4IJQqElXalz9cMFlKGN1+Lu7vL95IzInfjZSpj+SuEZDmZ3nNiVAYC",
-	"oJfxQzsVHRYuE2EJzbAI3pWYkOg0bSPwsietMtwbZAv7+ldXVJnNgXbLknceybYN4qM2OjCEqmcJEFNH",
-	"CCVaSLcw+Gb2OHI6J5upjbbalEbGw65GbuedsO8JiiaCE95hEPP1iWS0Wh04yPiP5KYU1WEKyEI7CHMq",
-	"zxVtP0iTQqbKnIr6bjphsRPLB/n+Az/Sy9kLKn2VZR4CAynUQlsWzAkgjvd2lzd6SXmvylCUQfw+vfok",
-	"Kk2Ix6oj/SNDYCOmy67f9sQjv2qt8h9/AmUttu5a1XEb9dq/qaZAR9FmpO3KFLlfR1FUDUkboHJDVRS5",
-	"Trh2gy+euD430v+MkMlY/jTYD+NBPYkHzTHMrtQS5NZwsHaAVPgyScD7rMxznlk7cv8SosNRttkwKl8a",
-	"o3AtY/knVbvpDASP/XegeX7w3HC+w8Wq+SIUHyMHJbPyBSQ6Y3cFHZaAQom7m4+V54qdVX22Dml7gW6l",
-	"2ZjJHTgIdyvZdFlsTZvWKIm2/JecCXwQc5eu+5/tkTdWwF5gjr/d3l4zutogd0SCEzX7blGWmMtuR+ya",
-	"eced84k4tpM+LcE2SKcaIQn5Kbvinx8Z1ayycPDhF5euW3oK8D0MEr861NGOxlxbxcnaQY8UfdtkUCdo",
-	"M1lpJR4J72NbBvzx9l/1Yuv7pwP8tNF7jR74H9rwuJfqrwJWJ9bFrDh4wNVWzyTEE99scjPb/B0AAP//",
-	"/UKGzTEMAAA=",
+	"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",
+	"Xy8AAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

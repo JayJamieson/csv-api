@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JayJamieson/csv-api/pkg/db"
+	"github.com/JayJamieson/csv-api/pkg/sniff"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
@@ -42,8 +43,16 @@ func New(config Config) (*Server, error) {
 		db:     database,
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to load swagger: %w", err)
+	// Migrations for the staged-import flow: mapping store (learning) and
+	// import state (survives restart between /load and /commit).
+	migrateCtx, cancelMigrate := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelMigrate()
+	if err := database.MigrateImportState(migrateCtx); err != nil {
+		return nil, fmt.Errorf("failed to migrate import_state: %w", err)
+	}
+	mappingStore := &sniff.MappingStore{DB: database.Meta()}
+	if err := mappingStore.Migrate(migrateCtx); err != nil {
+		return nil, fmt.Errorf("failed to migrate csv_mappings: %w", err)
 	}
 
 	e.Use(middleware.Logger())
@@ -63,6 +72,17 @@ func (s *Server) setupDefaultRoutes() {
 	s.router.GET("/swagger/*", echoSwagger.EchoWrapHandlerV3(func(c *echoSwagger.Config) {
 		c.URLs = []string{"http://localhost:3000/doc.yml"}
 	}))
+
+	// Serve the built review UI (web/dist) at the root if present, so the SPA
+	// and API share an origin. Registered routes (/api/:id, /load, /imports/*,
+	// /swagger/*) are more specific than the static "/*" and keep priority. In
+	// dev, run `cd web && npm run dev` (Vite proxies the API to this server)
+	// instead of building; for production run `npm run build`.
+	if _, err := os.Stat("web/dist/index.html"); err == nil {
+		s.router.Static("/", "web/dist")
+	} else {
+		s.router.Logger.Info("web/dist not built; review UI not served (run: cd web && npm run build)")
+	}
 }
 
 func (s *Server) Start() error {

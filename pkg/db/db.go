@@ -15,6 +15,10 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/marcboeker/go-duckdb/v2"
 	_ "github.com/tursodatabase/libsql-client-go/libsql"
+	// Pure-Go sqlite driver (registers as "sqlite"). libsql-client-go delegates
+	// local file: URLs to a registered sqlite/sqlite3 driver, so without this
+	// the server can only start against a remote libsql:// URL.
+	_ "modernc.org/sqlite"
 )
 
 type DB struct {
